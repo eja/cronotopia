@@ -76,3 +76,10 @@ The application exposes a JSON API at `/api` for querying historical data.
 | `longitude` | float | Geographic longitude for proximity sorting. |
 | `range` | int | Temporal logic: `0` (Specific), `1` (Before), `2` (After). |
 | `limit` | int | Maximum number of results to return (default: 100). |
+
+## Acknowledgments
+
+*   **[Wikidata](https://www.wikidata.org/):** For the provision of the extensive, structured open knowledge graph that serves as the primary source for the historical data processed by this system.
+*   **[SQLite](https://www.sqlite.org/):** For the robust, serverless database engine that underpins the application's architecture, enabling its reliable offline performance and unified data storage.
+*   **[MapLibre](https://maplibre.org/):** For the advanced, open-source mapping libraries utilized to render the vector tiles and geospatial visualizations within the user interface.
+*   **[Protomaps](https://protomaps.com/):** For the innovative tools and ecosystem that facilitate the efficient storage and serving of vector tiles.
