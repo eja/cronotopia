@@ -1,6 +1,6 @@
 # Cronotopia
 
-An high-performance, offline-first spatio-temporal database engine and map visualization server written in Go.
+An offline-first spatio-temporal database engine and map visualization server written in Go.
 
 It is designed to ingest massive datasets from Wikidata, extract entities with temporal and geospatial properties, and serve them alongside embedded vector map tiles from a single, portable SQLite database.
 
