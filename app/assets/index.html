@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="/css/maplibre-gl.css" />
+    <script src="/js/maplibre-gl.js"></script>
+    <script src="/js/basemaps.js"></script>
+    <title>Cronotopia</title>
+    <style>
+      .maplibregl-popup-content {
+        padding: 0 !important;
+        background: none !important;
+        box-shadow: none !important;
+        border-radius: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      window.MAP_CONFIG = {
+        center: [{{.CenterLng}}, {{.CenterLat}}],
+        zoom: {{.Zoom}},
+        minZoom: {{.MinZoom}},
+        maxZoom: {{.MaxZoom}}
+      };
+    </script>
+    <div id="map" class="position-absolute top-0 start-0 w-100 h-100 z-0"></div>
+    <div class="position-absolute top-0 start-0 w-100 z-1 bg-white bg-opacity-90 shadow-sm p-2">
+        <div class="container-fluid">
+            <form class="row g-2 align-items-center" onsubmit="return false;">
+                
+                <div class="col-12 col-md-3 col-lg-3">
+                    <div class="input-group input-group-sm">
+                        <select id="range" class="form-select">
+                          <option value="0">Date</option>
+                          <option value="1">Before</option>
+                          <option value="2">After</option>
+                        </select>
+                        <input type="number" id="day" class="form-control text-end" placeholder="DD" min="1" max="31">
+                        <input type="number" id="month" class="form-control text-end" placeholder="MM" min="1" max="12">
+                        <input type="number" id="year" class="form-control text-end" placeholder="YYYY">
+                    </div>
+                </div>
+
+                <div class="col-12 col-md-3 col-lg-2">
+                    <div class="input-group input-group-sm">
+                        <input type="text" id="latitude" class="form-control" placeholder="Latitude">
+                        <input type="text" id="longitude" class="form-control" placeholder="Longitude">
+                    </div>
+                </div>
+                
+                <input type="hidden" id="precision" value="2">
+
+                <div class="col-12 col-md">
+                    <input type="text" id="query" class="form-control form-control-sm" placeholder="Search...">
+                </div>
+
+                <div class="col-12 col-md-auto d-grid">
+                    <button class="btn btn-primary btn-sm" onclick="loadData()">Search</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/js/script.js"></script>
+  </body>
+</html>
+
