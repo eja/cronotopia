@@ -1,6 +1,6 @@
 # Cronotopia
 
-An high-performance, offline-first spatio-temporal database engine and map visualization server written in Go. 
+An high-performance, offline-first spatio-temporal database engine and map visualization server written in Go.
 
 It is designed to ingest massive datasets from Wikidata, extract entities with temporal and geospatial properties, and serve them alongside embedded vector map tiles from a single, portable SQLite database.
 
@@ -18,9 +18,14 @@ Cronotopia is built to map history without relying on external dependencies or i
 
 ## Installation
 
-### Building from Source
+### 1. Download Binaries
+Pre-compiled binaries for **Linux**, **macOS**, and **Windows** are available on the [Releases](https://github.com/eja/cronotopia/releases/latest) page.
 
-Clone the repository and build the binary:
+### 2. Download Preprocessed Database
+To run Cronotopia without importing raw data yourself, you can download a preprocessed, gzipped database containing historical entities and map tiles from [Hugging Face](https://huggingface.co/datasets/eja/cronotopia).
+
+### 3. Building from Source
+Alternatively, you can clone the repository and build the binary yourself:
 
 ```bash
 git clone https://github.com/eja/cronotopia.git
@@ -33,7 +38,6 @@ make
 Cronotopia operates in two modes: **Import Mode** and **Server Mode**.
 
 ### 1. Data Import
-
 To populate the database with historical data, provide a URL or a local path to a Wikidata entity dump.
 *Note: The target SQLite database should already contain the vector tiles table (`tiles`) if you intend to use the map offline, any mbtiles db will work.*
 
@@ -49,7 +53,6 @@ To populate the database with historical data, provide a URL or a local path to 
 *   `--log`: Enable verbose logging to stdout.
 
 ### 2. Server Mode
-
 Run the application without the `--import` flag to start the web server. This hosts the API, the Tile Server, and the MapLibre frontend.
 
 ```bash
@@ -80,6 +83,6 @@ The application exposes a JSON API at `/api` for querying historical data.
 ## Acknowledgments
 
 *   **[Wikidata](https://www.wikidata.org/):** For the provision of the extensive, structured open knowledge graph that serves as the primary source for the historical data processed by this system.
-*   **[SQLite](https://www.sqlite.org/):** For the robust, serverless database engine that underpins the application's architecture, enabling its reliable offline performance and unified data storage.
+*   **[OpenStreetMap](https://www.openstreetmap.org/):** For the open geospatial data used to generate the base map tiles.
 *   **[MapLibre](https://maplibre.org/):** For the advanced, open-source mapping libraries utilized to render the vector tiles and geospatial visualizations within the user interface.
-*   **[Protomaps](https://protomaps.com/):** For the innovative tools and ecosystem that facilitate the efficient storage and serving of vector tiles.
+*   **[SQLite](https://www.sqlite.org/):** For the robust, serverless database engine that underpins the application's architecture, enabling its reliable offline performance and unified data storage.
