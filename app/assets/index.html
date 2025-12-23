@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="/pics/cronotopia.svg">
     <link rel="stylesheet" href="/css/bootstrap.min.css"/>
     <link rel="stylesheet" href="/css/maplibre-gl.css" />
     <script src="/js/maplibre-gl.js"></script>
@@ -18,15 +19,8 @@
     </style>
   </head>
   <body>
-    <script>
-      window.MAP_CONFIG = {
-        center: [{{.CenterLng}}, {{.CenterLat}}],
-        zoom: {{.Zoom}},
-        minZoom: {{.MinZoom}},
-        maxZoom: {{.MaxZoom}}
-      };
-    </script>
     <div id="map" class="position-absolute top-0 start-0 w-100 h-100 z-0"></div>
+
     <div class="position-absolute top-0 start-0 w-100 z-1 bg-white bg-opacity-90 shadow-sm p-2">
         <div class="container-fluid">
             <form class="row g-2 align-items-center" onsubmit="return false;">
@@ -58,12 +52,25 @@
                 </div>
 
                 <div class="col-12 col-md-auto d-grid">
-                    <button class="btn btn-primary btn-sm" onclick="loadData()">Search</button>
+                  <button onclick="loadData()" class="btn btn-primary">
+                    <span id="buttonText">Search</span>
+                    <span id="buttonSpinner" class="spinner-border spinner-border-sm d-none" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </span>
+                  </button>
                 </div>
             </form>
         </div>
     </div>
 
+    <script>
+      window.MAP_CONFIG = {
+        center: [{{.CenterLng}}, {{.CenterLat}}],
+        zoom: {{.Zoom}},
+        minZoom: {{.MinZoom}},
+        maxZoom: {{.MaxZoom}}
+      };
+    </script>
     <script src="/js/script.js"></script>
   </body>
 </html>

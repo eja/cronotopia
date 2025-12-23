@@ -40,8 +40,8 @@ func runServer(dbFile, host, port string) {
 	fileServer := http.FileServer(http.FS(assetsRoot))
 	http.Handle("/js/", fileServer)
 	http.Handle("/css/", fileServer)
+	http.Handle("/pics/", fileServer)
 	http.Handle("/fonts/", fileServer)
-	http.Handle("/sprites/", fileServer)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/index.html" {

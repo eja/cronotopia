@@ -32,7 +32,7 @@ document.addEventListener("DOMContentLoaded", function() {
         style: {
             version: 8,
             glyphs: window.location.origin + "/fonts/{fontstack}/{range}.pbf",
-            sprite: window.location.origin + "/sprites/light",
+            sprite: window.location.origin + "/pics/light",
             sources: {
                 "local_mbtiles": {
                     type: "vector",
@@ -133,7 +133,12 @@ document.addEventListener("DOMContentLoaded", function() {
 function createFeature(o, lon, lat) {
     var prop = (propertyMap[language] && propertyMap[language][o.code]) ? propertyMap[language][o.code] : "Property " + o.code;
     var wikiUrl = `https://${language}.wikipedia.org/wiki/${encodeURIComponent(o.label.replace(/ /g, "_"))}`;
-    
+
+    let date = ''
+    if (o.day) date += o.day
+    if (o.month) date += (date && '/') + o.month
+    if (o.year) date += (date && '/') + o.year
+
     var txt = `
         <div class="item">
             <h6 class="mb-1">
@@ -142,7 +147,7 @@ function createFeature(o, lon, lat) {
             <div class="small text-muted mb-2">${o.data || ""}</div>
             <div class="text-end pt-1 mt-1">
                 <small class="text-secondary fw-bold">${prop}:</small>
-                <small class="fw-bold text-dark">${o.year || "N/A"}</small>
+                <small class="fw-bold text-dark">${date}</small>
             </div>
         </div>`;
 
@@ -151,40 +156,6 @@ function createFeature(o, lon, lat) {
         "properties": { "popupHtml": txt }, 
         "geometry": { "type": "Point", "coordinates": [lon, lat] }
     };
-}
-
-function loadData() {
-    var params = {
-        day: document.getElementById("day")?.value || 0,
-        month: document.getElementById("month")?.value || 0,
-        year: document.getElementById("year")?.value || 0,
-        latitude: document.getElementById("latitude")?.value || 0,
-        longitude: document.getElementById("longitude")?.value || 0,
-        range: document.getElementById("range")?.value || 50,
-        query: document.getElementById("query")?.value || "",
-        limit: 50
-    };
-
-    fetch("/api?" + new URLSearchParams(params).toString())
-        .then(res => res.json())
-        .then(data => {
-            if (!data || data.length === 0) {
-              var center = map.getCenter();
-              new maplibregl.Popup().setLngLat(center).setHTML('<div class="bg-light p-3"><strong>No results found</strong></div>').addTo(map);
-              return;
-            }
-            var limitedData = data.slice(0, 50);
-            
-            var features = spiderfyData(limitedData);
-            if (map.getSource('results')) {
-                map.getSource('results').setData({ "type": "FeatureCollection", "features": features });
-                if (features.length > 0) {
-                    var bounds = new maplibregl.LngLatBounds();
-                    features.forEach(f => bounds.extend(f.geometry.coordinates));
-                    map.fitBounds(bounds, { padding: 60, maxZoom: 12 });
-                }
-            }
-        });
 }
 
 function spiderfyData(data) {
@@ -209,4 +180,50 @@ function spiderfyData(data) {
         }
     }
     return resultFeatures;
+}
+
+
+function loadData() {
+    const buttonSpinner = document.getElementById('buttonSpinner');
+    const buttonText = document.getElementById('buttonText');
+    if (buttonSpinner) buttonSpinner.classList.remove('d-none');
+    if (buttonText) buttonText.textContent = 'Searching...';
+    
+    const searchButton = document.querySelector('button[onclick="loadData()"]');
+    if (searchButton) searchButton.disabled = true;
+ 
+   var params = {
+        day: document.getElementById("day")?.value || 0,
+        month: document.getElementById("month")?.value || 0,
+        year: document.getElementById("year")?.value || 0,
+        latitude: document.getElementById("latitude")?.value || 0,
+        longitude: document.getElementById("longitude")?.value || 0,
+        range: document.getElementById("range")?.value || 50,
+        query: document.getElementById("query")?.value || "",
+        limit: 50
+    };
+
+    fetch("/api?" + new URLSearchParams(params).toString())
+        .then(res => res.json())
+        .then(data => {
+            if (buttonSpinner) buttonSpinner.classList.add('d-none');
+            if (buttonText) buttonText.textContent = 'Search';
+            if (searchButton) searchButton.disabled = false;
+            if (!data || data.length === 0) {
+              var center = map.getCenter();
+              new maplibregl.Popup().setLngLat(center).setHTML('<div class="bg-light p-3"><strong>No results found</strong></div>').addTo(map);
+              return;
+            }
+            var limitedData = data.slice(0, 50);
+            
+            var features = spiderfyData(limitedData);
+            if (map.getSource('results')) {
+                map.getSource('results').setData({ "type": "FeatureCollection", "features": features });
+                if (features.length > 0) {
+                    var bounds = new maplibregl.LngLatBounds();
+                    features.forEach(f => bounds.extend(f.geometry.coordinates));
+                    map.fitBounds(bounds, { padding: 60, maxZoom: 12 });
+                }
+            }
+        });
 }

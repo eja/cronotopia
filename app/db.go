@@ -36,35 +36,73 @@ func createTables(db *sql.DB) {
 }
 
 func dbWorker(db *sql.DB, in <-chan ExtractedData) {
-	tx, err := db.Begin()
+	stmtTime, err := db.Prepare("INSERT INTO time (id, code, year, month, day, hour, minute, second) VALUES (?,?,?,?,?,?,?,?)")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	stmtTime, _ := tx.Prepare("INSERT INTO time (id, code, year, month, day, hour, minute, second) VALUES (?,?,?,?,?,?,?,?)")
-	stmtLink, _ := tx.Prepare("INSERT INTO link (id, code, value) VALUES (?,?,?)")
-	stmtPlace, _ := tx.Prepare("INSERT INTO place (id, code, latitude, longitude, precision) VALUES (?,?,?,?,?)")
-	stmtQuery, _ := tx.Prepare("INSERT INTO query (id, language, label, data) VALUES (?,?,?,?)")
-
 	defer stmtTime.Close()
+
+	stmtLink, err := db.Prepare("INSERT INTO link (id, code, value) VALUES (?,?,?)")
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer stmtLink.Close()
+
+	stmtPlace, err := db.Prepare("INSERT INTO place (id, code, latitude, longitude, precision) VALUES (?,?,?,?,?)")
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer stmtPlace.Close()
+
+	stmtQuery, err := db.Prepare("INSERT INTO query (id, language, label, data) VALUES (?,?,?,?)")
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer stmtQuery.Close()
+
+	var tx *sql.Tx
+	var txStmtTime, txStmtLink, txStmtPlace, txStmtQuery *sql.Stmt
+
+	beginTx := func() {
+		var err error
+		tx, err = db.Begin()
+		if err != nil {
+			log.Fatal(err)
+		}
+		txStmtTime = tx.Stmt(stmtTime)
+		txStmtLink = tx.Stmt(stmtLink)
+		txStmtPlace = tx.Stmt(stmtPlace)
+		txStmtQuery = tx.Stmt(stmtQuery)
+	}
+
+	beginTx()
 
 	counter := 0
 
 	for item := range in {
 		for _, t := range item.Times {
-			stmtTime.Exec(item.ID, t.Code, t.Y, t.M, t.D, t.H, t.Min, t.Sec)
+			_, err := txStmtTime.Exec(item.ID, t.Code, t.Y, t.M, t.D, t.H, t.Min, t.Sec)
+			if err != nil {
+				log.Printf("Error inserting time: %v", err)
+			}
 		}
 		for _, l := range item.Links {
-			stmtLink.Exec(item.ID, l.Code, l.Value)
+			_, err := txStmtLink.Exec(item.ID, l.Code, l.Value)
+			if err != nil {
+				log.Printf("Error inserting link: %v", err)
+			}
 		}
 		for _, p := range item.Place {
-			stmtPlace.Exec(item.ID, p.Code, p.Lat, p.Lon, p.Precision)
+			_, err := txStmtPlace.Exec(item.ID, p.Code, p.Lat, p.Lon, p.Precision)
+			if err != nil {
+				log.Printf("Error inserting place: %v", err)
+			}
 		}
 		for _, q := range item.Query {
-			stmtQuery.Exec(item.ID, q.Lang, q.Label, q.Data)
+			_, err := txStmtQuery.Exec(item.ID, q.Lang, q.Label, q.Data)
+			if err != nil {
+				log.Printf("Error inserting query: %v", err)
+			}
 		}
 
 		counter++
@@ -72,15 +110,14 @@ func dbWorker(db *sql.DB, in <-chan ExtractedData) {
 			if err := tx.Commit(); err != nil {
 				log.Fatal(err)
 			}
-			tx, _ = db.Begin()
-			stmtTime = tx.Stmt(stmtTime)
-			stmtLink = tx.Stmt(stmtLink)
-			stmtPlace = tx.Stmt(stmtPlace)
-			stmtQuery = tx.Stmt(stmtQuery)
+			beginTx()
 			counter = 0
 		}
 	}
-	tx.Commit()
+
+	if err := tx.Commit(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func postProcess(db *sql.DB) {
@@ -163,20 +200,20 @@ func SearchEvents(db *sql.DB, p SearchParams) ([]SearchResult, error) {
 	}
 
 	sqlQuery := fmt.Sprintf(`
-		SELECT 
-			t.id, t.code, 
-			p.latitude, p.longitude, 
-			t.day, t.month, t.year, 
-			q.label, q.data,
-			(ABS(p.latitude - ?) + ABS(p.longitude - ?)) as spaceSpan,
-			ABS((t.year*10000 + t.month*100 + t.day) - ?) as timeSpan
-		FROM time t
-		JOIN place p ON t.id = p.id
-		JOIN query q ON t.id = q.id
-		%s
-		ORDER BY spaceSpan ASC, timeSpan %s
-		LIMIT ?
-	`, whereSQL, timeOrder)
+        SELECT 
+            t.id, t.code, 
+            p.latitude, p.longitude, 
+            t.day, t.month, t.year, 
+            q.label, q.data,
+            (ABS(p.latitude - ?) + ABS(p.longitude - ?)) as spaceSpan,
+            ABS((t.year*10000 + t.month*100 + t.day) - ?) as timeSpan
+        FROM time t
+        JOIN place p ON t.id = p.id
+        JOIN query q ON t.id = q.id
+        %s
+        ORDER BY spaceSpan ASC, timeSpan %s
+        LIMIT ?
+    `, whereSQL, timeOrder)
 
 	finalArgs := []interface{}{p.Lat, p.Lon, targetDateInt}
 	finalArgs = append(finalArgs, args...)
