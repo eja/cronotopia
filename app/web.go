@@ -37,23 +37,25 @@ type hybridListener struct {
 }
 
 func (l *hybridListener) Accept() (net.Conn, error) {
-	conn, err := l.Listener.Accept()
-	if err != nil {
-		return nil, err
-	}
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
 
-	br := bufio.NewReader(conn)
-	peek, err := br.Peek(1)
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
+		br := bufio.NewReader(conn)
+		peek, err := br.Peek(1)
+		if err != nil {
+			conn.Close()
+			continue
+		}
 
-	if peek[0] == 0x16 {
-		return tls.Server(combinedConn{br, conn}, l.config), nil
-	}
+		if peek[0] == 0x16 {
+			return tls.Server(combinedConn{br, conn}, l.config), nil
+		}
 
-	return combinedConn{br, conn}, nil
+		return combinedConn{br, conn}, nil
+	}
 }
 
 type combinedConn struct {
