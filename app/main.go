@@ -11,7 +11,7 @@ const Name = "Cronotopia"
 const Version = "7.12.23"
 
 func main() {
-	var importSrc, dbFile, langStr, logFile, webHost, webPort string
+	var importSrc, dbFile, langStr, logFile, webHost, webPort, webTlsPublic, webTlsPrivate string
 	var logging bool
 
 	flag.StringVar(&importSrc, "import", "", "Wikidata dump url or file")
@@ -21,6 +21,8 @@ func main() {
 	flag.StringVar(&logFile, "log-file", "", "Log to file")
 	flag.StringVar(&webHost, "web-host", "localhost", "Web server host.")
 	flag.StringVar(&webPort, "web-port", "35248", "Web server port.")
+	flag.StringVar(&webTlsPublic, "web-tls-public", "", "Web TLS public certificate")
+	flag.StringVar(&webTlsPrivate, "web-tls-private", "", "Web TLS private certificate")
 
 	flag.Usage = func() {
 		fmt.Println("Copyright:", "2018-2025 by Ubaldo Porcheddu <ubaldo@eja.it>")
@@ -45,6 +47,6 @@ func main() {
 	if importSrc != "" {
 		runImport(importSrc, dbFile, langStr, logging)
 	} else {
-		runServer(dbFile, webHost, webPort)
+		runServer(dbFile, webHost, webPort, webTlsPrivate, webTlsPublic)
 	}
 }
