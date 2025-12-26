@@ -31,7 +31,6 @@ document.addEventListener("DOMContentLoaded", function() {
         zoom: cfg.zoom,
         style: {
             version: 8,
-            glyphs: window.location.origin + "/fonts/{fontstack}/{range}.pbf",
             sprite: window.location.origin + "/pics/light",
             sources: {
                 "local_mbtiles": {
@@ -132,7 +131,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
 function createFeature(o, lon, lat) {
     var prop = (propertyMap[language] && propertyMap[language][o.code]) ? propertyMap[language][o.code] : "Property " + o.code;
-    var wikiUrl = `https://${language}.wikipedia.org/wiki/${encodeURIComponent(o.label.replace(/ /g, "_"))}`;
+    var wikiUrl = `https://www.wikidata.org/wiki/Q${o.id}`;
 
     let date = ''
     if (o.day) date += o.day

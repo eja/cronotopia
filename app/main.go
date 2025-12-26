@@ -8,7 +8,7 @@ import (
 )
 
 const Name = "Cronotopia"
-const Version = "7.12.23"
+const Version = "7.12.26"
 
 func main() {
 	var importSrc, dbFile, langStr, logFile, webHost, webPort, webTlsPublic, webTlsPrivate string
