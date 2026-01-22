@@ -1,3 +1,5 @@
+// Copyright (C) by Ubaldo Porcheddu <ubaldo@eja.it>
+
 package main
 
 import (
@@ -8,7 +10,7 @@ import (
 )
 
 const Name = "Cronotopia"
-const Version = "7.12.26"
+const Version = "8.1.22"
 
 func main() {
 	var importSrc, dbFile, langStr, logFile, webHost, webPort, webTlsPublic, webTlsPrivate string
@@ -25,7 +27,7 @@ func main() {
 	flag.StringVar(&webTlsPrivate, "web-tls-private", "", "Web TLS private certificate")
 
 	flag.Usage = func() {
-		fmt.Println("Copyright:", "2018-2025 by Ubaldo Porcheddu <ubaldo@eja.it>")
+		fmt.Println("Copyright:", "2018-2026 by Ubaldo Porcheddu <ubaldo@eja.it>")
 		fmt.Println("Version:", Version)
 		fmt.Printf("Usage: %s [options]\n", os.Args[0])
 		fmt.Println("Options:\n")

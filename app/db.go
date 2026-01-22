@@ -1,3 +1,5 @@
+// Copyright (C) by Ubaldo Porcheddu <ubaldo@eja.it>
+
 package main
 
 import (
@@ -19,14 +21,13 @@ func createTables(db *sql.DB) {
 		`CREATE TABLE IF NOT EXISTS time (id INTEGER, code INTEGER, year INTEGER, month INTEGER, day INTEGER, hour INTEGER, minute INTEGER, second INTEGER);`,
 		`CREATE INDEX IF NOT EXISTS idx_time_id ON time(id);`,
 		`CREATE INDEX IF NOT EXISTS idx_time_ymd ON time(year, month, day);`,
+		`CREATE INDEX IF NOT EXISTS idx_time_md ON time(month, day);`,
 
-		`CREATE TABLE IF NOT EXISTS query (id INTEGER, language TEXT, label TEXT, data TEXT);`,
-		`CREATE INDEX IF NOT EXISTS query_id on query (id);`,
-		`CREATE INDEX IF NOT EXISTS query_label on query (label);`,
-		`CREATE INDEX IF NOT EXISTS query_lang on query (language);`,
+		`CREATE TABLE IF NOT EXISTS query (id INTEGER PRIMARY KEY, language TEXT, label TEXT, data TEXT);`,
 
 		`CREATE TEMPORARY TABLE IF NOT EXISTS link (id INTEGER, code INTEGER, value INTEGER);`,
 		`CREATE INDEX IF NOT EXISTS idx_link_val ON link(value);`,
+		`CREATE INDEX IF NOT EXISTS idx_link_code ON link(code);`,
 	}
 	for _, s := range sqls {
 		if _, err := db.Exec(s); err != nil {
@@ -124,6 +125,12 @@ func postProcess(db *sql.DB) {
 	queries := []string{
 		`INSERT INTO place SELECT link.id, link.code, place.latitude, place.longitude, place.precision FROM link INNER JOIN place ON link.value = place.id WHERE link.code = 19`,
 		`INSERT INTO place SELECT link.id, link.code, place.latitude, place.longitude, place.precision FROM link INNER JOIN place ON link.value = place.id WHERE link.code = 20`,
+		`DELETE FROM place WHERE NOT EXISTS (SELECT 1 FROM time WHERE time.id = place.id)`,
+		`DELETE FROM time WHERE NOT EXISTS (SELECT 1 FROM place WHERE time.id = place.id)`,
+		`DELETE FROM query WHERE NOT EXISTS (SELECT 1 FROM place WHERE place.id = query.id) AND NOT EXISTS (SELECT 1 FROM time WHERE time.id = query.id)`,
+		`DELETE FROM place WHERE NOT EXISTS (SELECT 1 FROM time WHERE time.id = place.id)`,
+		`DELETE FROM time WHERE NOT EXISTS (SELECT 1 FROM place WHERE time.id = place.id)`,
+		`VACUUM`,
 	}
 	for _, q := range queries {
 		if _, err := db.Exec(q); err != nil {
@@ -158,7 +165,7 @@ func SearchEvents(db *sql.DB, p SearchParams) ([]SearchResult, error) {
 			}
 		} else {
 			if p.Day > 0 && p.Month > 0 {
-				whereClauses = append(whereClauses, "t.year = ? AND t.month = ? AND t.day = ?")
+				whereClauses = append(whereClauses, "(t.year, t.month, t.day) = (?, ?, ?)")
 				args = append(args, p.Year, p.Month, p.Day)
 			} else {
 				if p.Day > 0 {
@@ -174,11 +181,11 @@ func SearchEvents(db *sql.DB, p SearchParams) ([]SearchResult, error) {
 			}
 		}
 	} else if p.Range == 1 {
-		whereClauses = append(whereClauses, "(t.year*10000 + t.month*100 + t.day) <= ?")
-		args = append(args, targetDateInt)
+		whereClauses = append(whereClauses, "(t.year, t.month, t.day) <= (?, ?, ?)")
+		args = append(args, p.Year, p.Month, p.Day)
 	} else if p.Range == 2 {
-		whereClauses = append(whereClauses, "(t.year*10000 + t.month*100 + t.day) >= ?")
-		args = append(args, targetDateInt)
+		whereClauses = append(whereClauses, "(t.year, t.month, t.day) >= (?, ?, ?)")
+		args = append(args, p.Year, p.Month, p.Day)
 	}
 
 	if p.QueryText != "" {

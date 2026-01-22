@@ -1,3 +1,5 @@
+// Copyright (C) by Ubaldo Porcheddu <ubaldo@eja.it>
+
 package main
 
 import (
@@ -233,6 +235,7 @@ func parseStream(r io.Reader, out chan<- ExtractedData, langs []string, logging 
 		}
 
 		if hasRelevantData {
+			found := false
 			for _, lang := range langs {
 				if label, ok := ent.Labels[lang]; ok {
 					descStr := ""
@@ -240,8 +243,33 @@ func parseStream(r io.Reader, out chan<- ExtractedData, langs []string, logging 
 						descStr = desc.Value
 					}
 					data.Query = append(data.Query, QueryRecord{lang, label.Value, descStr})
+					found = true
+					break
 				}
 			}
+
+			if !found {
+				if label, ok := ent.Labels["mul"]; ok {
+					descStr := ""
+					if desc, ok := ent.Descriptions["mul"]; ok {
+						descStr = desc.Value
+					}
+					data.Query = append(data.Query, QueryRecord{"mul", label.Value, descStr})
+					found = true
+				}
+			}
+
+			if !found {
+				for lang, label := range ent.Labels {
+					descStr := ""
+					if desc, ok := ent.Descriptions[lang]; ok {
+						descStr = desc.Value
+					}
+					data.Query = append(data.Query, QueryRecord{lang, label.Value, descStr})
+					break
+				}
+			}
+
 			out <- data
 		}
 
