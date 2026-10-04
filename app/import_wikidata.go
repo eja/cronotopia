@@ -327,7 +327,7 @@ func parseWikidataStream(r io.Reader, out chan<- ExtractedData, langs []string, 
 
 		if hasRelevant {
 			for _, lang := range langs {
-				if label, ok := ent.Labels[lang]; ok {
+				if label, ok := ent.Labels[lang]; ok && strings.TrimSpace(label.Value) != "" {
 					desc := ""
 					if d, ok := ent.Descriptions[lang]; ok {
 						desc = d.Value
@@ -335,7 +335,9 @@ func parseWikidataStream(r io.Reader, out chan<- ExtractedData, langs []string, 
 					data.Query = append(data.Query, QueryRecord{lang, label.Value, desc})
 				}
 			}
-			out <- data
+			if len(data.Query) > 0 {
+				out <- data
+			}
 		}
 
 		count++
