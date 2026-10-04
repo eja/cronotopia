@@ -1,228 +1,440 @@
-var propertyMap = {
-    "en": {
-        "19": "Place of birth", "20": "Place of death", "625": "Location",
-        "569": "Date of birth", "570": "Date of death", "571": "Inception",
-        "575": "Discovery or invention time", "576": "Dissolved date",
-        "577": "Publication date", "580": "Start time", "582": "End time",
-        "585": "Point in time", "729": "Service entry", "730": "Service retirement",
-        "746": "Date of disappearance", "1191": "Date of first performance",
-        "1249": "Time of earliest written record", "1319": "Earliest date",
-        "1326": "Latest date", "1619": "Date of official opening",
-        "2031": "Start of the working period", "2032": "End of the working period",
-        "2669": "Discontinued date", "2754": "Production date",
-        "3999": "Date of official closure", "5204": "Date of commercialization",
-        "6949": "Announcement date", "7124": "Date of the first one",
-        "7125": "Date of the latest one", "7588": "Effective date",
-        "7589": "Enacted date", "9667": "Date of resignation", "10135": "Recording date",
-    }
+let map;
+let markers = [];
+let lastResults = [];
+let isMobileMap = false;
+let initialMapCenter = [12.4964, 41.9028];
+let initialMapZoom = 4;
+
+const PROPERTIES = {
+    569:   'Date of birth',
+    570:   'Date of death',
+    571:   'Inception',
+    575:   'Time of discovery',
+    576:   'Dissolution date',
+    577:   'Publication date',
+    580:   'Start time',
+    582:   'End time',
+    585:   'Point in time',
+    729:   'Service entry',
+    730:   'Service retirement',
+    746:   'Date of disappearance',
+    1191:  'Date of first performance',
+    1249:  'Time of earliest written record',
+    1319:  'Earliest date',
+    1326:  'Latest date',
+    1619:  'Date of official opening',
+    2031:  'Work period start',
+    2032:  'Work period end',
+    2669:  'Discontinued date',
+    2754:  'Production date',
+    3999:  'Date of official closure',
+    5204:  'Floruit',
+    6949:  'Announcement date',
+    7124:  'Date of first flight',
+    7125:  'Date of latest flight',
+    7588:  'Commissioning',
+    7589:  'Decommissioning',
+    9667:  'Combat start',
+    10135: 'Combat end',
+    625:   'Coordinate location',
+    19:    'Place of birth',
+    20:    'Place of death'
 };
 
-var map, language = "en";
+function getMapLayers() {
+    if (typeof basemaps !== 'undefined' && typeof basemaps.layers === 'function') {
+        const flavor = (typeof basemaps.namedFlavor === 'function') ? basemaps.namedFlavor("light") : "light";
+        return basemaps.layers("protomaps", flavor, { lang: "en" });
+    }
+    return [
+        { id: 'background', type: 'background', paint: { 'background-color': '#f2f3f4' } },
+        { id: 'landcover', type: 'fill', source: 'protomaps', 'source-layer': 'landcover', paint: { 'fill-color': '#dce8d2' } },
+        { id: 'water', type: 'fill', source: 'protomaps', 'source-layer': 'water', paint: { 'fill-color': '#a3c2e8' } },
+        { id: 'roads', type: 'line', source: 'protomaps', 'source-layer': 'roads', paint: { 'line-color': '#ffffff', 'line-width': 1.5 } }
+    ];
+}
 
-document.addEventListener("DOMContentLoaded", function() {
-    const cfg = window.MAP_CONFIG || { center: [0, 0], zoom: 1, minZoom: 0, maxZoom: 14 };
+async function probeMaxZoom(lng, lat) {
+    for (let z = 14; z >= 4; z--) {
+        const x = Math.floor((lng + 180) / 360 * Math.pow(2, z));
+        const latRad = lat * Math.PI / 180;
+        const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z));
+        try {
+            const resp = await fetch(`/tiles/${z}/${x}/${y}.pbf`);
+            if (resp.ok) return z;
+        } catch (_) {}
+    }
+    return 10;
+}
 
-    document.getElementById("day").value = new Date().getDate();
-    document.getElementById("month").value = new Date().getMonth()+1;
+async function initMap() {
+    let mapConfig = { min_zoom: 0, max_zoom: 14, center_lng: 12.4964, center_lat: 41.9028, zoom: 4 };
+
+    try {
+        const res = await fetch('/api/map');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.max_zoom > 0) mapConfig.max_zoom = data.max_zoom;
+            if (data.min_zoom !== undefined) mapConfig.min_zoom = data.min_zoom;
+            if (data.center_lng && data.center_lat) {
+                mapConfig.center_lng = data.center_lng;
+                mapConfig.center_lat = data.center_lat;
+                mapConfig.zoom = data.zoom || Math.max(mapConfig.min_zoom, 4);
+            }
+        } else {
+            mapConfig.max_zoom = await probeMaxZoom(mapConfig.center_lng, mapConfig.center_lat);
+        }
+    } catch (e) {
+        mapConfig.max_zoom = await probeMaxZoom(mapConfig.center_lng, mapConfig.center_lat);
+    }
+
+    initialMapCenter = [mapConfig.center_lng, mapConfig.center_lat];
+    initialMapZoom = mapConfig.zoom;
 
     map = new maplibregl.Map({
         container: "map",
-        center: cfg.center,
-        zoom: cfg.zoom,
         style: {
             version: 8,
             sprite: window.location.origin + "/pics/light",
             sources: {
-                "local_mbtiles": {
+                "protomaps": {
                     type: "vector",
                     tiles: [window.location.origin + "/tiles/{z}/{x}/{y}.pbf"],
-                    minzoom: cfg.minZoom, maxzoom: cfg.maxZoom 
+                    minzoom: mapConfig.min_zoom,
+                    maxzoom: mapConfig.max_zoom
                 }
             },
-            layers: basemaps.layers("local_mbtiles", basemaps.namedFlavor("light"), { lang: language })
-        }
+            layers: getMapLayers()
+        },
+        center: [mapConfig.center_lng, mapConfig.center_lat],
+        zoom: mapConfig.zoom,
+        minZoom: mapConfig.min_zoom,
+        maxZoom: 22
     });
 
-    if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(function(position) {
-            const userLon = position.coords.longitude;
-            const userLat = position.coords.latitude;
-            const startZoom = cfg.maxZoom;
+    map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserHeading: true }));
+    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+    map.on('load', () => map.resize());
+}
 
-            map.flyTo({
-                center: [userLon, userLat],
-                zoom: startZoom,
-                speed: 1.2,
-                essential: true
-            });
+function haversineDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371.0;
+    const dLat = (lat2 - lat1) * Math.PI / 180.0;
+    const dLon = (lon2 - lon1) * Math.PI / 180.0;
+    const a = Math.sin(dLat/2) ** 2 + Math.cos(lat1 * Math.PI / 180.0) * Math.cos(lat2 * Math.PI / 180.0) * Math.sin(dLon/2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
-            const latEl = document.getElementById("latitude");
-            const lonEl = document.getElementById("longitude");
-            if (latEl) latEl.value = userLat.toFixed(6);
-            if (lonEl) lonEl.value = userLon.toFixed(6);
-        }, function(err) {
-            console.warn("GPS Access Denied:", err);
-        });
+function getMapRadiusKm() {
+    const center = map.getCenter();
+    const ne = map.getBounds().getNorthEast();
+    return Math.max(1, Math.round(haversineDistance(center.lat, center.lng, ne.lat, ne.lng)));
+}
+
+function resetMap() {
+    markers.forEach(m => m?.marker?.remove());
+    markers = [];
+    if (map) map.flyTo({ center: initialMapCenter, zoom: initialMapZoom });
+}
+
+async function executeSearch() {
+    const query = document.getElementById('input-query').value.trim();
+    const year = document.getElementById('input-year').value.trim();
+    const month = document.getElementById('input-month').value.trim();
+    const day = document.getElementById('input-day').value.trim();
+    const range = document.getElementById('select-range').value;
+    const mode = document.getElementById('select-mode').value;
+    const restrictMap = document.getElementById('select-visible-map').value === 'true';
+
+    if (!query && !year && !month && !day && !restrictMap) return;
+
+    resetMap();
+
+    const countEl = document.getElementById('results-count');
+    const metaEl = document.getElementById('results-meta');
+    const listEl = document.getElementById('results-list');
+    const placeholder = document.getElementById('results-placeholder');
+
+    listEl.innerHTML = '';
+    placeholder.style.display = 'block';
+    placeholder.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><div class="mt-2 text-muted small">Searching...</div></div>';
+    countEl.textContent = 'Searching...';
+    metaEl.textContent = '...';
+
+    const params = new URLSearchParams();
+    if (query) params.set('query', query);
+    if (year) params.set('year', year);
+    if (month) params.set('month', month);
+    if (day) params.set('day', day);
+    if (range && range !== '0') params.set('range', range);
+    if (mode) params.set('mode', mode);
+    params.set('limit', '50');
+
+    if (restrictMap && map) {
+        const center = map.getCenter();
+        params.set('latitude', center.lat.toFixed(6));
+        params.set('longitude', center.lng.toFixed(6));
+        params.set('radius_km', getMapRadiusKm().toString());
     }
 
-    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    try {
+        const t0 = performance.now();
+        const resp = await fetch('/api?' + params.toString());
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
 
-    map.on('load', function() {
-        map.addSource('results', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] },
-            cluster: false 
-        });
+        lastResults = data || [];
+        countEl.textContent = `Found ${lastResults.length} in ${elapsed}s`;
+        metaEl.textContent = `${lastResults.length} items`;
 
-        map.addLayer({
-            id: 'unclustered-point',
-            type: 'circle',
-            source: 'results',
-            paint: {
-                'circle-color': '#0d6efd',
-                'circle-radius': 9,
-                'circle-stroke-width': 3,
-                'circle-stroke-color': '#fff'
+        renderResults(lastResults);
+        renderMarkers(lastResults);
+    } catch (err) {
+        countEl.textContent = 'Error during search';
+        metaEl.textContent = '0 items';
+        placeholder.innerHTML = '<p class="text-danger py-5">An error occurred while fetching results.</p>';
+    }
+}
+
+function renderResults(items) {
+    const listEl = document.getElementById('results-list');
+    const placeholder = document.getElementById('results-placeholder');
+
+    listEl.innerHTML = '';
+    if (!items || items.length === 0) {
+        placeholder.style.display = 'block';
+        placeholder.innerHTML = '<p class="text-muted py-5">No results found for your criteria.</p>';
+        return;
+    }
+    placeholder.style.display = 'none';
+
+    items.forEach((item, idx) => {
+        const card = document.createElement('div');
+        const itemType = item.type || 'C';
+        card.className = `card result-card type-${itemType} p-2 shadow-sm`;
+        card.dataset.index = idx;
+
+        const hasCoords = typeof item.latitude === 'number' && typeof item.longitude === 'number' && (item.latitude !== 0 || item.longitude !== 0);
+
+        const b = item.date_begin ? String(item.date_begin).trim() : '';
+        const e = item.date_end ? String(item.date_end).trim() : '';
+        const fallbackYear = item.year ? (item.year > 0 ? String(item.year) : `${Math.abs(item.year)} BCE`) : '';
+
+        let dateTagsHtml = '';
+        if (b && e && b !== e) {
+            dateTagsHtml = `<span class="tag-item">${b}</span><span class="tag-item">${e}</span>`;
+        } else if (b || e) {
+            dateTagsHtml = `<span class="tag-item">${b || e}</span>`;
+        } else if (fallbackYear) {
+            dateTagsHtml = `<span class="tag-item">${fallbackYear}</span>`;
+        }
+
+        const propLabel = PROPERTIES[item.code];
+        const propTagHtml = propLabel ? `<span class="tag-prop" title="Matched property">${propLabel}</span>` : '';
+
+        const typeConfigs = {
+            'E': { char: 'E', title: 'Event' },
+            'C': { char: 'L', title: 'Lexical match' },
+            'V': { char: 'S', title: 'Semantic match' }
+        };
+        const currentType = typeConfigs[itemType] || { char: itemType, title: 'Item' };
+        const tBadge = `<span class="type-badge type-badge-${itemType}" title="${currentType.title}">${currentType.char}</span>`;
+        const locButton = hasCoords ? `<button type="button" class="btn-pin btn-pin-click" data-index="${idx}" title="Center map">📍</button>` : '';
+        const canRead = itemType !== 'E' || Boolean(item.article_id);
+        const readButton = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;">Read</button>` : '';
+
+        card.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start mb-1">
+                <div class="fw-bold text-truncate me-2" title="${item.title || 'Untitled'}">${item.title || 'Untitled'}</div>
+                <div>${tBadge}</div>
+            </div>
+            <div class="text-muted small mb-2 text-truncate-2" style="font-size: 0.85rem;">
+                ${item.snippet || item.text || ''}
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-auto pt-1">
+                <div class="d-flex align-items-center flex-wrap gap-1">${propTagHtml}${dateTagsHtml}${locButton}</div>
+                ${readButton}
+            </div>
+        `;
+
+        card.addEventListener('click', (ev) => {
+            if (ev.target.closest('.btn-pin-click')) {
+                ev.stopPropagation();
+                flyToMarker(idx);
+                return;
             }
-        });
-
-        map.on('move', function() {
-            const center = map.getCenter();
-            const latEl = document.getElementById("latitude");
-            const lonEl = document.getElementById("longitude");
-            if (latEl) latEl.value = center.lat.toFixed(6);
-            if (lonEl) lonEl.value = center.lng.toFixed(6);
-        });
-
-        map.on('click', 'unclustered-point', function(e) {
-            var features = map.queryRenderedFeatures(e.point, { layers: ['unclustered-point'] });
-            var listHtml = features.map(f => f.properties.popupHtml).join('<hr>');
-
-            var cardHtml = `
-                <div class="card shadow border-0 overflow-hidden" style="width: 320px;">
-                    <div class="card-header bg-light d-flex align-items-center justify-content-end py-2 border-bottom-0">
-                        <button type="button" class="btn-close small" onclick="map.getCanvas().click()" aria-label="Close" style="font-size: 0.7rem;"></button>
-                    </div>
-                    <div class="card-body overflow-auto p-3" style="max-height: 350px;">
-                        ${listHtml}
-                    </div>
-                    ${features.length > 1 ? `<div class="card-footer py-1 bg-light text-center small text-secondary fw-bold border-top-0">${features.length} Items Found</div>` : ''}
-                </div>`;
-
-            var popup = new maplibregl.Popup({ 
-                maxWidth: 'none', 
-                offset: [0, -10],
-                closeButton: false
-            })
-                .setLngLat(features[0].geometry.coordinates)
-                .setHTML(cardHtml)
-                .addTo(map);
-
-            const closeBtn = document.querySelector('.btn-close');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', () => popup.remove());
+            if (ev.target.classList.contains('btn-read')) {
+                openArticle(item.entity_id, item.article_id);
+                return;
             }
+            highlightCard(idx);
+            highlightMarker(idx);
         });
 
-        map.on('mouseenter', 'unclustered-point', () => map.getCanvas().style.cursor = 'pointer');
-        map.on('mouseleave', 'unclustered-point', () => map.getCanvas().style.cursor = '');
+        card.addEventListener('mouseenter', () => highlightMarker(idx));
+        card.addEventListener('mouseleave', () => unhighlightMarker(idx));
+        listEl.appendChild(card);
+    });
+}
+
+function renderMarkers(items) {
+    markers.forEach(m => m?.marker?.remove());
+    markers = [];
+    if (!map) return;
+
+    items.forEach((item, idx) => {
+        const hasCoords = typeof item.latitude === 'number' && typeof item.longitude === 'number' && (item.latitude !== 0 || item.longitude !== 0);
+        if (!hasCoords) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'marker-wrapper';
+
+        const pin = document.createElement('div');
+        const itemType = item.type || 'C';
+        pin.className = `custom-pin pin-${itemType}`;
+        pin.innerHTML = `<span>${idx + 1}</span>`;
+        wrapper.appendChild(pin);
+
+        const canRead = itemType !== 'E' || Boolean(item.article_id);
+        const entId = item.entity_id || 0;
+        const artId = item.article_id || 0;
+        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-primary w-100 py-0" onclick="openArticle(${entId}, ${artId})">Read Article</button>` : '';
+
+        const popup = new maplibregl.Popup({ offset: [0, -32] }).setHTML(`
+            <div class="p-1">
+                <h6 class="fw-bold mb-1">${item.title || 'Untitled'}</h6>
+                <p class="small text-muted mb-2">${item.snippet || ''}</p>
+                ${readBtnHtml}
+            </div>
+        `);
+
+        const marker = new maplibregl.Marker({ element: wrapper, anchor: 'bottom' })
+            .setLngLat([item.longitude, item.latitude])
+            .setPopup(popup)
+            .addTo(map);
+
+        marker.getElement().addEventListener('click', () => highlightCard(idx));
+        markers.push({ idx, marker, el: wrapper });
+    });
+}
+
+function flyToMarker(idx) {
+    highlightCard(idx);
+    highlightMarker(idx);
+    const mObj = markers.find(m => m.idx === idx);
+    if (mObj && map) {
+        map.flyTo({ center: mObj.marker.getLngLat(), zoom: Math.max(map.getZoom(), 8) });
+        mObj.marker.togglePopup();
+    }
+}
+
+function highlightMarker(idx) {
+    markers.find(m => m.idx === idx)?.el.classList.add('highlighted');
+}
+
+function unhighlightMarker(idx) {
+    markers.find(m => m.idx === idx)?.el.classList.remove('highlighted');
+}
+
+function highlightCard(idx) {
+    document.querySelectorAll('.result-card').forEach(c => c.classList.remove('active'));
+    const card = document.querySelector(`.result-card[data-index="${idx}"]`);
+    if (card) {
+        card.classList.add('active');
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function setModalVisible(show) {
+    const modalEl = document.getElementById('articleModal');
+    let backdrop = document.getElementById('modal-backdrop');
+    if (show) {
+        modalEl.style.display = 'block';
+        modalEl.removeAttribute('aria-hidden');
+        modalEl.classList.add('show');
+        document.body.classList.add('modal-open');
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.id = 'modal-backdrop';
+            backdrop.className = 'modal-backdrop fade show';
+            document.body.appendChild(backdrop);
+        }
+    } else {
+        if (document.activeElement && modalEl.contains(document.activeElement)) document.activeElement.blur();
+        modalEl.classList.remove('show');
+        modalEl.style.display = 'none';
+        modalEl.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('modal-open');
+        backdrop?.remove();
+    }
+}
+
+async function openArticle(entityId, articleId) {
+    if (!entityId && !articleId) return;
+    const titleEl = document.getElementById('articleModalTitle');
+    const subEl = document.getElementById('articleModalSubtitle');
+    const bodyEl = document.getElementById('articleModalBody');
+
+    titleEl.textContent = 'Loading article...';
+    subEl.textContent = '';
+    bodyEl.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
+    setModalVisible(true);
+
+    try {
+        const url = `/api?${entityId ? 'entity_id=' + encodeURIComponent(entityId) : 'article_id=' + encodeURIComponent(articleId)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error('Not found');
+        const art = await resp.json();
+
+        titleEl.textContent = art.title || 'Untitled';
+        subEl.textContent = art.date_begin ? `Date: ${art.date_begin}` : (art.year ? `Year: ${art.year}` : '');
+
+        let html = '';
+        if (art.sections && art.sections.length > 0) {
+            art.sections.forEach(s => {
+                if (s.title) html += `<h5 class="mt-3 border-bottom pb-1">${s.title}</h5>`;
+                html += `<p style="white-space: pre-line;">${s.content}</p>`;
+            });
+        } else {
+            html = '<p class="text-muted">No content available for this entry.</p>';
+        }
+        bodyEl.innerHTML = html;
+    } catch (e) {
+        titleEl.textContent = 'Error';
+        bodyEl.innerHTML = '<div class="alert alert-danger">Could not load article content.</div>';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initMap();
+
+    document.getElementById('app-header').addEventListener('click', (e) => {
+        if (!e.target.closest('#mobile-toggle-btn')) window.location.reload();
+    });
+
+    document.getElementById('btn-search').addEventListener('click', executeSearch);
+
+    ['input-query', 'input-year', 'input-month', 'input-day'].forEach(id => {
+        document.getElementById(id).addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') executeSearch();
+        });
+    });
+
+    const closeModal = () => setModalVisible(false);
+    document.getElementById('btn-modal-close').addEventListener('click', closeModal);
+    document.getElementById('btn-modal-close-x').addEventListener('click', closeModal);
+    document.getElementById('articleModal').addEventListener('click', (e) => {
+        if (e.target.id === 'articleModal') closeModal();
+    });
+
+    const mobileBtn = document.getElementById('mobile-toggle-btn');
+    mobileBtn.addEventListener('click', () => {
+        const sidebar = document.getElementById('sidebar');
+        isMobileMap = !isMobileMap;
+        sidebar.classList.toggle('mobile-hidden', isMobileMap);
+        mobileBtn.textContent = isMobileMap ? 'List' : 'Map';
+        if (isMobileMap && map) map.resize();
     });
 });
-
-function createFeature(o, lon, lat) {
-    var prop = (propertyMap[language] && propertyMap[language][o.code]) ? propertyMap[language][o.code] : "Property " + o.code;
-    var wikiUrl = `https://www.wikidata.org/wiki/Q${o.id}`;
-
-    let date = ''
-    if (o.day) date += o.day
-    if (o.month) date += (date && '/') + o.month
-    if (o.year) date += (date && '/') + o.year
-
-    var txt = `
-        <div class="item">
-            <h6 class="mb-1">
-                <a href="${wikiUrl}" target="_blank" class="text-decoration-none text-secondary fw-bold">${o.label}</a>
-            </h6>
-            <div class="small text-muted mb-2">${o.data || ""}</div>
-            <div class="text-end pt-1 mt-1">
-                <small class="text-secondary fw-bold">${prop}:</small>
-                <small class="fw-bold text-dark">${date}</small>
-            </div>
-        </div>`;
-
-    return { 
-        "type": "Feature", 
-        "properties": { "popupHtml": txt }, 
-        "geometry": { "type": "Point", "coordinates": [lon, lat] }
-    };
-}
-
-function spiderfyData(data) {
-    var groups = {};
-    data.forEach(o => {
-        var key = parseFloat(o.latitude).toFixed(6) + "," + parseFloat(o.longitude).toFixed(6);
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(o);
-    });
-    var resultFeatures = [];
-    var radius = 0.001; 
-    for (var key in groups) {
-        var items = groups[key];
-        var lon = parseFloat(items[0].longitude), lat = parseFloat(items[0].latitude);
-        if (items.length === 1) {
-            resultFeatures.push(createFeature(items[0], lon, lat));
-        } else {
-            items.forEach((item, i) => {
-                var angle = (i * 2 * Math.PI) / items.length;
-                resultFeatures.push(createFeature(item, lon + radius * Math.cos(angle), lat + radius * Math.sin(angle)));
-            });
-        }
-    }
-    return resultFeatures;
-}
-
-
-function loadData() {
-    const buttonSpinner = document.getElementById('buttonSpinner');
-    const buttonText = document.getElementById('buttonText');
-    if (buttonSpinner) buttonSpinner.classList.remove('d-none');
-    if (buttonText) buttonText.textContent = 'Searching...';
-    
-    const searchButton = document.querySelector('button[onclick="loadData()"]');
-    if (searchButton) searchButton.disabled = true;
- 
-   var params = {
-        day: document.getElementById("day")?.value || 0,
-        month: document.getElementById("month")?.value || 0,
-        year: document.getElementById("year")?.value || 0,
-        latitude: document.getElementById("latitude")?.value || 0,
-        longitude: document.getElementById("longitude")?.value || 0,
-        range: document.getElementById("range")?.value || 50,
-        query: document.getElementById("query")?.value || "",
-        limit: 50
-    };
-
-    fetch("/api?" + new URLSearchParams(params).toString())
-        .then(res => res.json())
-        .then(data => {
-            if (buttonSpinner) buttonSpinner.classList.add('d-none');
-            if (buttonText) buttonText.textContent = 'Search';
-            if (searchButton) searchButton.disabled = false;
-            if (!data || data.length === 0) {
-              var center = map.getCenter();
-              new maplibregl.Popup().setLngLat(center).setHTML('<div class="bg-light p-3"><strong>No results found</strong></div>').addTo(map);
-              return;
-            }
-            var limitedData = data.slice(0, 50);
-            
-            var features = spiderfyData(limitedData);
-            if (map.getSource('results')) {
-                map.getSource('results').setData({ "type": "FeatureCollection", "features": features });
-                if (features.length > 0) {
-                    var bounds = new maplibregl.LngLatBounds();
-                    features.forEach(f => bounds.extend(f.geometry.coordinates));
-                    map.fitBounds(bounds, { padding: 60, maxZoom: 12 });
-                }
-            }
-        });
-}
