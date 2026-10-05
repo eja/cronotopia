@@ -3,292 +3,266 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
-	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	"zombiezen.com/go/sqlite"
+	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func createTables(db *sql.DB) {
-	sqls := []string{
-		`CREATE TABLE IF NOT EXISTS place (id INTEGER, code INTEGER, latitude REAL, longitude REAL, precision REAL);`,
-		`CREATE INDEX IF NOT EXISTS idx_place_id ON place(id);`,
-
-		`CREATE TABLE IF NOT EXISTS time (id INTEGER, code INTEGER, year INTEGER, month INTEGER, day INTEGER, hour INTEGER, minute INTEGER, second INTEGER);`,
-		`CREATE INDEX IF NOT EXISTS idx_time_id ON time(id);`,
-		`CREATE INDEX IF NOT EXISTS idx_time_ymd ON time(year, month, day);`,
-		`CREATE INDEX IF NOT EXISTS idx_time_md ON time(month, day);`,
-
-		`CREATE TABLE IF NOT EXISTS query (id INTEGER PRIMARY KEY, language TEXT, label TEXT, data TEXT);`,
-
-		`CREATE TEMPORARY TABLE IF NOT EXISTS link (id INTEGER, code INTEGER, value INTEGER);`,
-		`CREATE INDEX IF NOT EXISTS idx_link_val ON link(value);`,
-		`CREATE INDEX IF NOT EXISTS idx_link_code ON link(code);`,
-	}
-	for _, s := range sqls {
-		if _, err := db.Exec(s); err != nil {
-			log.Fatalf("Init DB error: %v", err)
-		}
-	}
+type DBHandler struct {
+	pool       *sqlitex.Pool
+	isReadOnly bool
 }
 
-func dbWorker(db *sql.DB, in <-chan ExtractedData) {
-	stmtTime, err := db.Prepare("INSERT INTO time (id, code, year, month, day, hour, minute, second) VALUES (?,?,?,?,?,?,?,?)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer stmtTime.Close()
+func NewDBHandler(dbPath string) (*DBHandler, error) {
+	isReadOnly := !options.aiSync &&
+		options.wikipediaImport == "" &&
+		options.wikidataImport == "" &&
+		options.wikiliteImport == "" &&
+		options.ggufImport == "" &&
+		options.mbtilesImport == ""
 
-	stmtLink, err := db.Prepare("INSERT INTO link (id, code, value) VALUES (?,?,?)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer stmtLink.Close()
-
-	stmtPlace, err := db.Prepare("INSERT INTO place (id, code, latitude, longitude, precision) VALUES (?,?,?,?,?)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer stmtPlace.Close()
-
-	stmtQuery, err := db.Prepare("INSERT INTO query (id, language, label, data) VALUES (?,?,?,?)")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer stmtQuery.Close()
-
-	var tx *sql.Tx
-	var txStmtTime, txStmtLink, txStmtPlace, txStmtQuery *sql.Stmt
-
-	beginTx := func() {
-		var err error
-		tx, err = db.Begin()
+	if isReadOnly {
+		if _, err := os.Stat(dbPath); err != nil {
+			return nil, fmt.Errorf("database file does not exist: %w", err)
+		}
+	} else {
+		initConn, err := sqlite.OpenConn(dbPath, sqlite.OpenReadWrite|sqlite.OpenCreate)
 		if err != nil {
-			log.Fatal(err)
+			return nil, fmt.Errorf("cannot open sqlite database for initialization: %w", err)
 		}
-		txStmtTime = tx.Stmt(stmtTime)
-		txStmtLink = tx.Stmt(stmtLink)
-		txStmtPlace = tx.Stmt(stmtPlace)
-		txStmtQuery = tx.Stmt(stmtQuery)
-	}
 
-	beginTx()
+		sqls := []string{
+			"PRAGMA journal_mode = OFF;",
+			"PRAGMA synchronous = OFF;",
+			"PRAGMA temp_store = MEMORY;",
+			"PRAGMA mmap_size = 268435456;",
+			"PRAGMA cache_size = -100000;",
 
-	counter := 0
+			`CREATE TABLE IF NOT EXISTS settings (
+				key TEXT PRIMARY KEY,
+				value BLOB
+			);`,
 
-	for item := range in {
-		for _, t := range item.Times {
-			_, err := txStmtTime.Exec(item.ID, t.Code, t.Y, t.M, t.D, t.H, t.Min, t.Sec)
-			if err != nil {
-				log.Printf("Error inserting time: %v", err)
+			`CREATE TABLE IF NOT EXISTS entities (
+				id INTEGER PRIMARY KEY,
+				article_id INTEGER,
+				article_title TEXT
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_entities_art ON entities(article_id);`,
+
+			`CREATE TABLE IF NOT EXISTS entity_labels (
+				entity_id INTEGER,
+				lang TEXT,
+				label TEXT,
+				description TEXT,
+				PRIMARY KEY(entity_id, lang)
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_entity_labels_lookup ON entity_labels(lang, label);`,
+
+			`CREATE TABLE IF NOT EXISTS entity_times (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				entity_id INTEGER NOT NULL,
+				prop_code INTEGER NOT NULL,
+				year INTEGER NOT NULL,
+				month INTEGER DEFAULT 0,
+				day INTEGER DEFAULT 0,
+				julian_day INTEGER NOT NULL,
+				hour INTEGER DEFAULT 0,
+				minute INTEGER DEFAULT 0,
+				second INTEGER DEFAULT 0
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_times_entity ON entity_times(entity_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_times_jd ON entity_times(julian_day);`,
+			`CREATE INDEX IF NOT EXISTS idx_times_ymd ON entity_times(year, month, day);`,
+
+			`CREATE TABLE IF NOT EXISTS entity_places (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				entity_id INTEGER NOT NULL,
+				prop_code INTEGER NOT NULL,
+				latitude REAL NOT NULL,
+				longitude REAL NOT NULL,
+				precision REAL
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_places_entity ON entity_places(entity_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_places_coords ON entity_places(latitude, longitude);`,
+
+			`CREATE VIRTUAL TABLE IF NOT EXISTS entity_places_rtree USING rtree(
+				id,
+				min_lat, max_lat,
+				min_lon, max_lon
+			);`,
+
+			`CREATE TABLE IF NOT EXISTS sections (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				entity_id INTEGER NOT NULL,
+				title TEXT,
+				content TEXT,
+				pow INTEGER DEFAULT 0
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_sections_entity ON sections(entity_id);`,
+
+			`CREATE VIRTUAL TABLE IF NOT EXISTS section_search USING fts5(
+				title,
+				content,
+				content='sections',
+				content_rowid='id'
+			);`,
+
+			`CREATE TABLE IF NOT EXISTS vectors (
+				id INTEGER PRIMARY KEY,
+				embedding BLOB
+			);`,
+
+			`CREATE TABLE IF NOT EXISTS vectors_ann_chunks (
+				id INTEGER PRIMARY KEY,
+				chunk BLOB
+			);`,
+			`CREATE TABLE IF NOT EXISTS vectors_ann_index (
+				id INTEGER PRIMARY KEY,
+				vectors_id INTEGER NOT NULL,
+				chunk_id INTEGER NOT NULL,
+				chunk_position INTEGER NOT NULL
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_ann_chunk ON vectors_ann_index(chunk_id, chunk_position);`,
+
+			`CREATE TABLE IF NOT EXISTS vectors_ann_centroids (
+				id INTEGER PRIMARY KEY,
+				centroid BLOB
+			);`,
+			`CREATE TABLE IF NOT EXISTS vectors_ann_centroid_chunks (
+				centroid_id INTEGER,
+				chunk_id INTEGER
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_ann_centroid ON vectors_ann_centroid_chunks(centroid_id);`,
+
+			`CREATE TABLE IF NOT EXISTS tensors (
+				layer INTEGER NOT NULL,
+				name TEXT NOT NULL,
+				dtype INTEGER NOT NULL,
+				dims TEXT NOT NULL,
+				data BLOB NOT NULL,
+				PRIMARY KEY(layer, name)
+			) WITHOUT ROWID;`,
+
+			`CREATE TABLE IF NOT EXISTS tiles (
+				zoom_level INTEGER,
+				tile_column INTEGER,
+				tile_row INTEGER,
+				tile_data BLOB,
+				PRIMARY KEY(zoom_level, tile_column, tile_row)
+			);`,
+		}
+
+		for _, s := range sqls {
+			if err := sqlitex.ExecuteTransient(initConn, s, nil); err != nil {
+				initConn.Close()
+				return nil, fmt.Errorf("error initializing table: %s: %w", s, err)
 			}
 		}
-		for _, l := range item.Links {
-			_, err := txStmtLink.Exec(item.ID, l.Code, l.Value)
-			if err != nil {
-				log.Printf("Error inserting link: %v", err)
-			}
-		}
-		for _, p := range item.Place {
-			_, err := txStmtPlace.Exec(item.ID, p.Code, p.Lat, p.Lon, p.Precision)
-			if err != nil {
-				log.Printf("Error inserting place: %v", err)
-			}
-		}
-		for _, q := range item.Query {
-			_, err := txStmtQuery.Exec(item.ID, q.Lang, q.Label, q.Data)
-			if err != nil {
-				log.Printf("Error inserting query: %v", err)
-			}
+
+		var placesCount, rtreeCount int
+		_ = sqlitex.Execute(initConn, "SELECT COUNT(*) FROM entity_places", &sqlitex.ExecOptions{
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				placesCount = int(stmt.ColumnInt64(0))
+				return nil
+			},
+		})
+		_ = sqlitex.Execute(initConn, "SELECT COUNT(*) FROM entity_places_rtree", &sqlitex.ExecOptions{
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				rtreeCount = int(stmt.ColumnInt64(0))
+				return nil
+			},
+		})
+		if placesCount > 0 && rtreeCount < placesCount {
+			log.Printf("Syncing spatial R*Tree index (%d / %d records)...", rtreeCount, placesCount)
+			_ = sqlitex.Execute(initConn, `
+				INSERT OR IGNORE INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
+				SELECT id, latitude, latitude, longitude, longitude FROM entity_places
+			`, nil)
 		}
 
-		counter++
-		if counter >= BatchSize {
-			if err := tx.Commit(); err != nil {
-				log.Fatal(err)
-			}
-			beginTx()
-			counter = 0
-		}
+		initConn.Close()
 	}
 
-	if err := tx.Commit(); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func postProcess(db *sql.DB) {
-	queries := []string{
-		`INSERT INTO place SELECT link.id, link.code, place.latitude, place.longitude, place.precision FROM link INNER JOIN place ON link.value = place.id WHERE link.code = 19`,
-		`INSERT INTO place SELECT link.id, link.code, place.latitude, place.longitude, place.precision FROM link INNER JOIN place ON link.value = place.id WHERE link.code = 20`,
-		`DELETE FROM place WHERE NOT EXISTS (SELECT 1 FROM time WHERE time.id = place.id)`,
-		`DELETE FROM time WHERE NOT EXISTS (SELECT 1 FROM place WHERE time.id = place.id)`,
-		`DELETE FROM query WHERE NOT EXISTS (SELECT 1 FROM place WHERE place.id = query.id) AND NOT EXISTS (SELECT 1 FROM time WHERE time.id = query.id)`,
-		`DELETE FROM place WHERE NOT EXISTS (SELECT 1 FROM time WHERE time.id = place.id)`,
-		`DELETE FROM time WHERE NOT EXISTS (SELECT 1 FROM place WHERE time.id = place.id)`,
-		`VACUUM`,
-	}
-	for _, q := range queries {
-		if _, err := db.Exec(q); err != nil {
-			log.Printf("Post-process warning: %v", err)
-		}
-	}
-}
-
-func SearchEvents(db *sql.DB, p SearchParams) ([]SearchResult, error) {
-	var whereClauses []string
-	var args []interface{}
-
-	targetDateInt := p.Year*10000 + p.Month*100 + p.Day
-
-	whereClauses = append(whereClauses, "q.language = ?")
-	args = append(args, p.Lang)
-
-	if p.Range == 0 {
-		if p.Year == 0 {
-			if p.Day > 0 && p.Month > 0 {
-				whereClauses = append(whereClauses, "t.month = ? AND t.day = ?")
-				args = append(args, p.Month, p.Day)
+	opts := sqlitex.PoolOptions{
+		PoolSize: 16,
+		PrepareConn: func(conn *sqlite.Conn) error {
+			pragmas := []string{
+				"PRAGMA temp_store = MEMORY;",
+				"PRAGMA cache_size = -100000;",
+				"PRAGMA mmap_size = 268435456;",
+			}
+			if isReadOnly {
+				pragmas = append(pragmas, "PRAGMA query_only = ON;")
 			} else {
-				if p.Day > 0 {
-					whereClauses = append(whereClauses, "t.day = ?")
-					args = append(args, p.Day)
-				}
-				if p.Month > 0 {
-					whereClauses = append(whereClauses, "t.month = ?")
-					args = append(args, p.Month)
+				pragmas = append(pragmas,
+					"PRAGMA journal_mode = OFF;",
+					"PRAGMA synchronous = OFF;",
+				)
+			}
+			for _, p := range pragmas {
+				if err := sqlitex.ExecuteTransient(conn, p, nil); err != nil {
+					return err
 				}
 			}
-		} else {
-			if p.Day > 0 && p.Month > 0 {
-				whereClauses = append(whereClauses, "(t.year, t.month, t.day) = (?, ?, ?)")
-				args = append(args, p.Year, p.Month, p.Day)
+			return nil
+		},
+	}
+
+	openPath := dbPath
+	if isReadOnly {
+		opts.Flags = sqlite.OpenReadOnly | sqlite.OpenURI
+		cleanPath := filepath.ToSlash(dbPath)
+		if !strings.HasPrefix(cleanPath, "file:") {
+			openPath = fmt.Sprintf("file:%s?immutable=1", cleanPath)
+		} else if !strings.Contains(cleanPath, "immutable=") {
+			if strings.Contains(cleanPath, "?") {
+				openPath = cleanPath + "&immutable=1"
 			} else {
-				if p.Day > 0 {
-					whereClauses = append(whereClauses, "t.year = ? AND t.day = ?")
-					args = append(args, p.Year, p.Day)
-				} else if p.Month > 0 {
-					whereClauses = append(whereClauses, "t.year = ? AND t.month = ?")
-					args = append(args, p.Year, p.Month)
-				} else {
-					whereClauses = append(whereClauses, "t.year = ?")
-					args = append(args, p.Year)
-				}
+				openPath = cleanPath + "?immutable=1"
 			}
 		}
-	} else if p.Range == 1 {
-		whereClauses = append(whereClauses, "(t.year, t.month, t.day) <= (?, ?, ?)")
-		args = append(args, p.Year, p.Month, p.Day)
-	} else if p.Range == 2 {
-		whereClauses = append(whereClauses, "(t.year, t.month, t.day) >= (?, ?, ?)")
-		args = append(args, p.Year, p.Month, p.Day)
+	} else {
+		opts.Flags = sqlite.OpenReadWrite | sqlite.OpenCreate | sqlite.OpenURI
 	}
 
-	if p.QueryText != "" {
-		words := strings.Fields(p.QueryText)
-		for _, w := range words {
-			whereClauses = append(whereClauses, "q.label LIKE ?")
-			args = append(args, "%"+w+"%")
-		}
-	}
-
-	whereSQL := ""
-	if len(whereClauses) > 0 {
-		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
-	}
-
-	timeOrder := "ASC"
-	if p.Range == 1 {
-		timeOrder = "DESC"
-	}
-
-	sqlQuery := fmt.Sprintf(`
-        SELECT 
-            t.id, t.code, 
-            p.latitude, p.longitude, 
-            t.day, t.month, t.year, 
-            q.label, q.data,
-            (ABS(p.latitude - ?) + ABS(p.longitude - ?)) as spaceSpan,
-            ABS((t.year*10000 + t.month*100 + t.day) - ?) as timeSpan
-        FROM time t
-        JOIN place p ON t.id = p.id
-        JOIN query q ON t.id = q.id
-        %s
-        ORDER BY spaceSpan ASC, timeSpan %s
-        LIMIT ?
-    `, whereSQL, timeOrder)
-
-	finalArgs := []interface{}{p.Lat, p.Lon, targetDateInt}
-	finalArgs = append(finalArgs, args...)
-	finalArgs = append(finalArgs, p.Limit)
-
-	rows, err := db.Query(sqlQuery, finalArgs...)
+	pool, err := sqlitex.NewPool(openPath, opts)
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []SearchResult
-	for rows.Next() {
-		var r SearchResult
-		var spaceSpan, timeSpan float64
-
-		err := rows.Scan(
-			&r.ID, &r.Code,
-			&r.Lat, &r.Lon,
-			&r.Day, &r.Month, &r.Year,
-			&r.Label, &r.Data,
-			&spaceSpan, &timeSpan,
-		)
-		if err != nil {
-			continue
-		}
-		results = append(results, r)
+		return nil, fmt.Errorf("failed to open database pool: %w", err)
 	}
 
-	return results, nil
-}
-
-func GetMapConfig(db *sql.DB) MapConfig {
-	var err error
-	config := MapConfig{Zoom: 1, MinZoom: 0, MaxZoom: 14}
-
-	db.QueryRow("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles").Scan(&config.MinZoom, &config.MaxZoom)
-	config.Zoom = float64(config.MinZoom)
-	if config.Zoom == 0 {
-		config.Zoom = 1
+	handler := &DBHandler{
+		pool:       pool,
+		isReadOnly: isReadOnly,
 	}
 
-	var val string
-	err = db.QueryRow("SELECT value FROM metadata WHERE name='center'").Scan(&val)
-	if err == nil {
-		parts := strings.Split(val, ",")
-		if len(parts) >= 2 {
-			config.CenterLng, _ = strconv.ParseFloat(parts[0], 64)
-			config.CenterLat, _ = strconv.ParseFloat(parts[1], 64)
-			return config
+	if lang, err := handler.SettingGet("language"); err == nil && lang != "" {
+		options.language = lang
+	}
+	if model, err := handler.SettingGet("model"); err == nil && model != "" {
+		options.aiModel = model
+	}
+	if annSizeStr, err := handler.SettingGet("annSize"); err == nil && annSizeStr != "" {
+		if n, err := strconv.Atoi(annSizeStr); err == nil && n > 0 {
+			options.aiAnnSize = n
 		}
 	}
-
-	var z, x, yTms int
-	err = db.QueryRow("SELECT zoom_level, tile_column, tile_row FROM tiles WHERE zoom_level = ? LIMIT 1", config.MinZoom).Scan(&z, &x, &yTms)
-	if err == nil {
-		y := (1 << z) - 1 - yTms
-		n := math.Pow(2, float64(z))
-		config.CenterLng = float64(x)/n*360.0 - 180.0
-		latRad := math.Atan(math.Sinh(math.Pi * (1 - 2*float64(y)/n)))
-		config.CenterLat = latRad * 180.0 / math.Pi
+	if prefixSearch, err := handler.SettingGet("modelPrefixSearch"); err == nil && prefixSearch != "" {
+		options.aiModelPrefixSearch = prefixSearch
 	}
-	return config
+	if prefixSave, err := handler.SettingGet("modelPrefixSave"); err == nil && prefixSave != "" {
+		options.aiModelPrefixSave = prefixSave
+	}
+
+	return handler, nil
 }
 
-func GetTileData(db *sql.DB, z, x, y int) ([]byte, error) {
-	yTms := (1 << z) - 1 - y
-	var tileData []byte
-	err := db.QueryRow("SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?", z, x, yTms).Scan(&tileData)
-	return tileData, err
+func (h *DBHandler) Close() error {
+	return h.pool.Close()
 }

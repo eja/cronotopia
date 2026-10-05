@@ -2,87 +2,204 @@
 
 An offline-first spatio-temporal database engine and map visualization server written in Go.
 
-It is designed to ingest massive datasets from Wikidata, extract entities with temporal and geospatial properties, and serve them alongside embedded vector map tiles from a single, portable SQLite database.
+Cronotopia ingests and indexes data from Wikidata and Wikipedia, stores vector map tiles, and includes a native neural inference engine for vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, and map tiles are stored in a single SQLite database file.
 
 ## Overview
 
-Cronotopia is built to map history without relying on external dependencies or internet connectivity. It combines historical data processing with a full-stack map server. By storing both the extracted Wikidata entities and pre-rendered vector tiles in a single SQLite file, Cronotopia allows for a completely self-contained deployment—perfect for offline environments, archival projects, or private networks.
+Cronotopia is built to query historical events and geographic data without external services or internet access. It combines historical entity extraction, full-text article sections, and an integrated vector tile server.
+
+The system includes a pure Go execution engine for quantized GGUF embedding models. This enables semantic and hybrid search locally on CPU without any dependencies. In addition to a web frontend and REST API, Cronotopia implements a Model Context Protocol (MCP) server for integration with AI tools and agents.
 
 ## Key Features
 
-*   **100% Offline Capable:** Does not require external map providers or internet access to function once the database is built.
-*   **Single-File Architecture:** All data—historical records, search indices, and map vector tiles—are stored in one unified SQLite database file.
-*   **Integrated Vector Tile Server:** Serves geospatial tiles directly from the database to the MapLibre frontend (PBF/MVT format).
-*   **Efficient Ingestion:** Stream-based processing of large Wikidata JSON dumps.
-*   **Spatio-Temporal Search:** Custom SQL logic optimized for querying events by year, specific dates, and geographic proximity.
+*   **100% Offline:** Operates with no network dependencies once the database is populated. No external database engines or runtime libraries required.
+*   **Single-File Storage:** Entities, coordinates, timestamps, article sections (FTS5), spatial R*Trees, vector embeddings, ANN clusters, GGUF weights, and map tiles live in one SQLite file.
+*   **Data Ingestion:**
+    *   **Wikidata:** Stream ingestion of large dumps (`.json`, `.gz`, `.bz2`) extracting temporal events, geographic coordinates, and entity links.
+    *   **Wikipedia:** Ingestion of Wikipedia Enterprise HTML dumps (`tar.gz`) parsed into structured sections with an FTS5 index.
+    *   **MBTiles:** Direct import of Mapbox vector tiles (`.mbtiles`) into the internal tile schema.
+    *   **GGUF Models:** Direct import of the model weights into SQLite for local embedding generation.
+    *   **Wikilite:** One-step import of existing [Wikilite](https://github.com/eja/wikilite) SQLite databases.
+*   **Embedded AI & Semantic Search:**
+    *   Native Go implementation of Qwen3 transformer inference for Q8_0 quantization on CPU.
+    *   Configurable between low-RAM layer-by-layer reading and cached RAM execution.
+    *   Approximate Nearest Neighbor (ANN) index generation using Matryoshka Representation Learning (MRL) dimension reduction.
+    *   Hybrid retrieval combining BM25 full-text scoring, vector cosine distance, and spatio-temporal filters.
+    *   Optional support for external embedding APIs.
+*   **Spatio-Temporal Queries:** Fast spatial bounding-box checks using SQLite R*Tree, Haversine distance calculations, and Julian day calendar conversions for historical dates (exact date, before, after).
+*   **Tile Server & Web UI:** Serves vector tiles (PBF/MVT) directly to an embedded MapLibre GL frontend.
+*   **MCP Server:** Native `/mcp` endpoint exposing tools over JSON-RPC 2.0 (POST) and Server-Sent Events (GET).
 
 ## Installation
 
 ### 1. Download Binaries
-Pre-compiled binaries for **Linux**, **macOS**, and **Windows** are available on the [Releases](https://github.com/eja/cronotopia/releases/latest) page.
+Pre-compiled standalone binaries for Linux, macOS, and Windows are available on the [Releases](https://github.com/eja/cronotopia/releases/latest) page.
 
 ### 2. Download Preprocessed Database
-To run Cronotopia without importing raw data yourself, you can download a preprocessed, gzipped database containing historical entities and map tiles from [Hugging Face](https://huggingface.co/datasets/eja/cronotopia).
+To run Cronotopia without processing raw dumps, download a prebuilt database containing historical entities, articles, embeddings, and vector tiles from [Hugging Face](https://huggingface.co/datasets/eja/cronotopia).
 
 ### 3. Building from Source
-Alternatively, you can clone the repository and build the binary yourself:
+Requires Go 1.22 or later:
 
 ```bash
 git clone https://github.com/eja/cronotopia.git
 cd cronotopia
-make
+go build -o cronotopia .
 ```
 
 ## Usage
 
-Cronotopia operates in two modes: **Import Mode** and **Server Mode**.
+Cronotopia runs in import mode, server mode, or both. If any import or synchronization flag is specified, the application completes the tasks before starting the web server.
 
-### 1. Data Import
-To populate the database with historical data, provide a URL or a local path to a Wikidata entity dump.
-*Note: The target SQLite database should already contain the vector tiles table (`tiles`) if you intend to use the map offline, any mbtiles db will work.*
+### 1. Data Ingestion
 
+#### Import Map Tiles (MBTiles)
 ```bash
-# Import from a local file with specific language targeting
-./cronotopia --log --language "en,fr,es" --import ./wikidata-20251215-all.json.gz --db cronotopia.db
+./cronotopia --db cronotopia.db --import-mbtiles ./planet.mbtiles
 ```
 
-**Options:**
-*   `--import`: Path or URL to the source dump.
-*   `--db`: Path to the SQLite database (containing map tiles).
-*   `--language`: Comma-separated list of ISO language codes to import.
-*   `--log`: Enable verbose logging to stdout.
+#### Import Wikidata Dump
+```bash
+./cronotopia --db cronotopia.db \
+  --import-wikidata ./wikidata-latest-all.json.gz
+```
+
+#### Import Wikipedia HTML Dump
+```bash
+./cronotopia --db cronotopia.db \
+  --import-wikipedia ./enwiki-enterprise-html.tar.gz
+```
+
+#### Import a GGUF Model
+```bash
+./cronotopia --db cronotopia.db \
+  --import-gguf ./qwen3-embedding-0.6b-q8_0.gguf
+```
+
+#### Generate Embeddings (`--ai-sync`)
+Generate embeddings for imported sections:
+
+```bash
+./cronotopia --db cronotopia.db --ai-sync \
+  --ai-api --ai-api-url "http://localhost:8080/v1/embeddings" \
+  --ai-model "Qwen3-Embedding-0.6B-Q8_0"
+```
+
+#### Import a Wikilite Database
+```bash
+./cronotopia --db cronotopia.db --import-wikilite ./wikilite-en.db
+```
 
 ### 2. Server Mode
-Run the application without the `--import` flag to start the web server. This hosts the API, the Tile Server, and the MapLibre frontend.
+
+Start the web server, tile server, REST API, and MCP endpoint:
 
 ```bash
-./cronotopia --web-host localhost --web-port 35248 --db cronotopia.db
+./cronotopia --db cronotopia.db --web-host 0.0.0.0 --web-port 35248
 ```
 
-The web interface will be accessible at `http://localhost:35248`.
+The MapLibre interface will be available at `http://localhost:35248`.
+
+## Command-Line Options
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--db` | `cronotopia.db` | SQLite database file path. |
+| `--web-host` | `0.0.0.0` | Server listen host. |
+| `--web-port` | `35248` | Server listen port. |
+| `--language` | `en` | Comma-separated ISO language codes. |
+| `--limit` | `20` | Default search result limit. |
+| `--import-wikidata` | `""` | Path or URL to Wikidata dump (`.json`, `.gz`, `.bz2`). |
+| `--import-wikipedia` | `""` | Path or URL to Wikipedia Enterprise HTML dump (`.tar.gz`). |
+| `--import-wikilite` | `""` | Path to a pre-indexed Wikilite database. |
+| `--import-mbtiles` | `""` | Path to an MBTiles file. |
+| `--import-gguf` | `""` | Path to a GGUF model file. |
+| `--ai-sync` | `false` | Generate vector embeddings for unindexed sections. |
+| `--ai-ann` | `true` | Build clustered Matryoshka ANN index during embedding sync. |
+| `--ai-ann-size` | `64` | Dimension size for MRL vector indexing. |
+| `--ai-cache` | `false` | Cache model weights in memory. |
+| `--ai-api` | `false` | Use an external HTTP API for embeddings. |
+| `--ai-api-url` | `http://localhost:8080/v1/embeddings` | Embeddings API endpoint. |
+| `--ai-api-key` | `""` | Bearer key for embeddings API. |
+| `--ai-model` | `Qwen3-Embedding-0.6B-Q8_0` | Model name string. |
+| `--ai-model-prefix-search` | `Instruct: Retrieve...` | Prompt prefix added to search queries. |
+| `--ai-model-prefix-save` | `""` | Prompt prefix added to passage text. |
+| `--log` | `true` | Enable logging. |
+| `--log-file` | `""` | File path for log output. |
 
 ## API Reference
 
-The application exposes a JSON API at `/api` for querying historical data.
+### Search: `GET /api` or `GET /api/search`
 
-### Endpoint: `GET /api`
+Queries records by text, semantic vector, location, or time.
 
 **Parameters:**
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `query` | string | Text search for entity labels (e.g., "Battle of"). |
-| `day` | int | The target day. |
-| `month` | int | The target month. |
-| `year` | int | The target year. |
-| `latitude` | float | Geographic latitude for proximity sorting. |
-| `longitude` | float | Geographic longitude for proximity sorting. |
-| `range` | int | Temporal logic: `0` (Specific), `1` (Before), `2` (After). |
-| `limit` | int | Maximum number of results to return (default: 100). |
+| `query` | string | Search text. |
+| `mode` | string | `hybrid` (default), `lexical` (FTS5 BM25), or `semantic` (vector similarity). |
+| `latitude` | float | Target latitude for spatial search. |
+| `longitude` | float | Target longitude for spatial search. |
+| `radius_km` | float | Search radius in kilometers (default: 100). |
+| `year` | int | Astronomical year (negative numbers for BCE). |
+| `month` | int | Month (1-12). |
+| `day` | int | Day (1-31). |
+| `range` | string/int | Date matching: `0` (exact), `-1` or `lt` (before), `1` or `gt` (after). |
+| `limit` | int | Maximum results returned (default: 20). |
+| `language` | string | Language code override. |
+
+**Examples:**
+```bash
+# Events near Rome in 44 BCE
+curl "http://localhost:35248/api?latitude=41.9028&longitude=12.4964&radius_km=25&year=-44"
+
+# Hybrid text and geographic search
+curl "http://localhost:35248/api?query=Renaissance+artists&latitude=43.7696&longitude=11.2558"
+
+# Vector semantic search
+curl "http://localhost:35248/api?query=ancient+naval+warfare&mode=semantic"
+```
+
+### Article Retrieval: `GET /api/article`
+
+Retrieves Wikipedia sections, coordinates, and dates for an entity.
+
+**Parameters:**
+*   `id`: Entity ID (e.g. `8467` for Q8467) or Wikipedia article ID.
+*   `entity_id`: Filter by Wikidata entity ID.
+*   `article_id`: Filter by Wikipedia article ID.
+
+```bash
+curl "http://localhost:35248/api/article?id=8467"
+```
+
+### Map Metadata and Tiles
+
+*   `GET /api/map`: Returns center coordinates and zoom levels from settings.
+*   `GET /tiles/{z}/{x}/{y}.pbf`: Serves vector tiles directly from SQLite.
+
+## Model Context Protocol (MCP)
+
+Cronotopia provides an MCP endpoint at `/mcp` supporting JSON-RPC 2.0 over HTTP POST and SSE streams over GET.
+
+### Exposed Tools
+
+1.  **`search_events`**
+    *   Locate events by coordinates, radius, and year.
+    *   Arguments: `latitude` (number), `longitude` (number), `radius_km` (number), `year` (integer), `limit` (integer).
+2.  **`search_knowledge`**
+    *   Query indexed text and article sections.
+    *   Arguments: `query` (string), `limit` (integer).
+3.  **`get_article`**
+    *   Fetch full article text and section headings.
+    *   Arguments: `id` (integer).
 
 ## Acknowledgments
 
-*   **[Wikidata](https://www.wikidata.org/):** For the provision of the extensive, structured open knowledge graph that serves as the primary source for the historical data processed by this system.
-*   **[OpenStreetMap](https://www.openstreetmap.org/):** For the open geospatial data used to generate the base map tiles.
-*   **[MapLibre](https://maplibre.org/):** For the advanced, open-source mapping libraries utilized to render the vector tiles and geospatial visualizations within the user interface.
-*   **[SQLite](https://www.sqlite.org/):** For the robust, serverless database engine that underpins the application's architecture, enabling its reliable offline performance and unified data storage.
+*   **[Wikidata](https://www.wikidata.org/):** Source for entities, coordinates, dates, and claims.
+*   **[Wikipedia](https://www.wikipedia.org/):** Source for encyclopedic text and article structure.
+*   **[OpenStreetMap](https://www.openstreetmap.org/):** Geospatial data source for map tiles.
+*   **[Qwen Team](https://github.com/QwenLM):** Base embedding model architecture.
+*   **[MapLibre](https://maplibre.org/):** Client-side vector map renderer.
+*   **[SQLite](https://www.sqlite.org/):** Embedded storage engine.
