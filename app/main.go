@@ -12,7 +12,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.10.4"
+	Version = "8.10.5"
 )
 
 var (
@@ -44,9 +44,9 @@ func main() {
 	flag.StringVar(&options.aiModelPrefixSearch, "ai-model-prefix-search", "Instruct: Retrieve relevant passages\nQuery: ", "Prefix for query embeddings")
 	flag.BoolVar(&options.aiCache, "ai-cache", false, "Keep model weights cached in RAM")
 
-	flag.StringVar(&options.webHost, "web-host", "0.0.0.0", "Web API server host")
+	flag.StringVar(&options.webHost, "web-host", "127.0.0.1", "Web API server host")
 	flag.IntVar(&options.webPort, "web-port", 35248, "Web API server port")
-	flag.BoolVar(&options.log, "log", true, "Enable logging")
+	flag.BoolVar(&options.log, "log", false, "Enable logging")
 	flag.StringVar(&options.logFile, "log-file", "", "Log file output path")
 
 	flag.Usage = func() {
@@ -73,19 +73,18 @@ func main() {
 	}
 	defer db.Close()
 
+	importing := false
+
 	if options.ggufImport != "" {
+		importing = true
 		if err := ImportGGUFToDB(db, options.ggufImport); err != nil {
 			log.Fatalf("Model import error: %v", err)
 		}
 		log.Println("Model imported into database.")
-		if !ai {
-			if err := aiInit(); err == nil {
-				ai = true
-			}
-		}
 	}
 
 	if options.mbtilesImport != "" {
+		importing = true
 		if err := runMBTilesImport(db, options.mbtilesImport); err != nil {
 			log.Fatalf("MBTiles import error: %v", err)
 		}
@@ -93,38 +92,38 @@ func main() {
 	}
 
 	if options.wikidataImport != "" {
+		importing = true
 		runWikidataImport(options.wikidataImport)
 	}
 
 	if options.wikipediaImport != "" {
+		importing = true
 		if err := runWikipediaImport(options.wikipediaImport); err != nil {
 			log.Fatalf("Wikipedia import error: %v", err)
 		}
 	}
 
 	if options.wikiliteImport != "" {
+		importing = true
 		if err := runWikiliteImport(db, options.wikiliteImport); err != nil {
 			log.Fatalf("Wikilite import error: %v", err)
 		}
 		log.Println("Wikilite import completed successfully.")
-		if !ai {
-			if err := aiInit(); err == nil {
-				ai = true
+	}
+
+	if !importing {
+		if err := aiInit(); err != nil {
+			log.Printf("AI initialization warning: %v", err)
+		} else {
+			ai = true
+		}
+
+		if options.aiSync && ai {
+			if err := db.ProcessEmbeddings(); err != nil {
+				log.Fatalf("Embeddings processing error: %v", err)
 			}
 		}
-	}
 
-	if err := aiInit(); err != nil {
-		log.Printf("AI initialization warning: %v", err)
-	} else {
-		ai = true
+		runAPIServer()
 	}
-
-	if options.aiSync && ai {
-		if err := db.ProcessEmbeddings(); err != nil {
-			log.Fatalf("Embeddings processing error: %v", err)
-		}
-	}
-
-	runAPIServer()
 }
