@@ -56,7 +56,7 @@ Cronotopia operates in **import mode**, **compression mode**, or **server mode**
 
 ### 1. Data Ingestion
 
-#### Import Map Tiles (MBTiles)
+#### Import Map Tiles
 ```bash
 ./cronotopia --db cronotopia.db --import-mbtiles ./planet.mbtiles
 ```
@@ -84,7 +84,7 @@ Cronotopia operates in **import mode**, **compression mode**, or **server mode**
 ./cronotopia --db cronotopia.db --import-wikilite ./wikilite-en.db
 ```
 
-### 2. Database Compression (`--compress` / `--decompress`)
+### 2. Database Compression
 
 Cronotopia supports transparent querying of databases compressed with the seekable Zstandard format. You can compress an existing database to save disk space:
 
@@ -116,7 +116,7 @@ Start the web server, tile server, REST API, and MCP endpoint:
 
 The MapLibre interface will be available at `http://localhost:35248`.
 
-#### Syncing Embeddings on Startup (`--ai-sync`)
+#### Syncing Embeddings on Startup
 
 You can generate embeddings for unindexed article sections prior to launching the server.
 
@@ -125,13 +125,9 @@ You can generate embeddings for unindexed article sections prior to launching th
 > * **Batch Synchronization (`--ai-sync`):** Processing thousands of article passages locally on CPU can take a significant amount of time. For large dumps, using an accelerated external API endpoint (`--ai-api`) is **strongly recommended** for high ingestion throughput.
 
 ```bash
-# Recommended for batch indexing: Accelerated external embedding endpoint
 ./cronotopia --db cronotopia.db --ai-sync \
   --ai-api --ai-api-url "http://localhost:8080/v1/embeddings" \
   --ai-model "Qwen3-Embedding-0.6B-Q8_0"
-
-# Pure local CPU indexing (suitable for small datasets or testing)
-./cronotopia --db cronotopia.db --ai-sync
 ```
 
 ## Command-Line Options
