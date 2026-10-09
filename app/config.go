@@ -4,7 +4,8 @@ package main
 
 type Config struct {
 	dbPath              string
-	limit               int
+	compress            bool
+	decompress          bool
 	log                 bool
 	logFile             string
 	webHost             string

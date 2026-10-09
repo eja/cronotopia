@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 )
 
 const (
@@ -25,12 +26,13 @@ func main() {
 	options = &Config{}
 
 	flag.StringVar(&options.dbPath, "db", "cronotopia.db", "SQLite database path")
+	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd (.zst)")
+	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd (.zst)")
 	flag.StringVar(&options.wikidataImport, "import-wikidata", "", "Wikidata dump URL or file (.json, .gz, .bz2)")
 	flag.StringVar(&options.wikipediaImport, "import-wikipedia", "", "Wikipedia Enterprise HTML dump URL or tar.gz file")
 	flag.StringVar(&options.wikiliteImport, "import-wikilite", "", "Import pre-indexed Wikilite SQLite database")
 	flag.StringVar(&options.ggufImport, "import-gguf", "", "Import GGUF model directly into the db")
 	flag.StringVar(&options.mbtilesImport, "import-mbtiles", "", "Import MBTiles file into the tiles table")
-	flag.IntVar(&options.limit, "limit", 20, "Maximum search limit")
 
 	flag.BoolVar(&options.aiSync, "ai-sync", false, "Generate vector embeddings for imported articles")
 	flag.BoolVar(&options.aiAnn, "ai-ann", true, "Generate ANN clustered vector index")
@@ -63,6 +65,43 @@ func main() {
 		}
 	} else if !options.log {
 		log.SetOutput(io.Discard)
+	}
+
+	if options.compress && options.decompress {
+		fmt.Fprintln(os.Stderr, "Error: cannot specify both -decompress and -compress")
+		os.Exit(1)
+	}
+
+	if options.compress {
+		if !options.log && options.logFile == "" {
+			log.SetOutput(os.Stderr)
+		}
+		if strings.HasSuffix(options.dbPath, ".zst") {
+			fmt.Fprintf(os.Stderr, "Error: database %q already ends in .zst\n", options.dbPath)
+			os.Exit(1)
+		}
+		dst := options.dbPath + ".zst"
+		if err := CompressDB(options.dbPath, dst); err != nil {
+			fmt.Fprintf(os.Stderr, "Compress error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if options.decompress {
+		if !options.log && options.logFile == "" {
+			log.SetOutput(os.Stderr)
+		}
+		if !strings.HasSuffix(options.dbPath, ".zst") {
+			fmt.Fprintf(os.Stderr, "Error: cannot decompress %q (expected .zst suffix)\n", options.dbPath)
+			os.Exit(1)
+		}
+		dst := strings.TrimSuffix(options.dbPath, ".zst")
+		if err := DecompressDB(options.dbPath, dst); err != nil {
+			fmt.Fprintf(os.Stderr, "Decompress error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	var err error

@@ -66,7 +66,7 @@ func runAPIServer() {
 		mode := q.Get("mode")
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		if limit <= 0 {
-			limit = options.limit
+			limit = 10
 		}
 
 		lat, _ := strconv.ParseFloat(q.Get("latitude"), 64)
