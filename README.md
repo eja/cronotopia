@@ -13,7 +13,7 @@ The system includes a pure Go execution engine for quantized GGUF embedding mode
 ## Key Features
 
 *   **100% Offline:** Operates with no network dependencies once the database is populated. No external database engines or runtime libraries required.
-*   **Single-File Storage:** Entities, coordinates, timestamps, article sections (FTS5), spatial R*Trees, vector embeddings, ANN clusters, GGUF weights, and map tiles live in one SQLite file.
+*   **Single-File & Compressed Storage:** Entities, coordinates, timestamps, article sections (FTS5), spatial R*Trees, vector embeddings, ANN clusters, GGUF weights, and map tiles live in one SQLite file. Supports transparent, zero-extraction read-only querying directly from seekable Zstandard-compressed (`.zst`) files.
 *   **Data Ingestion:**
     *   **Wikidata:** Stream ingestion of large dumps (`.json`, `.gz`, `.bz2`) extracting temporal events, geographic coordinates, and entity links.
     *   **Wikipedia:** Ingestion of Wikipedia Enterprise HTML dumps (`tar.gz`) parsed into structured sections with an FTS5 index.
@@ -49,9 +49,10 @@ go build -o cronotopia .
 
 ## Usage
 
-Cronotopia operates in **import mode** or **server mode**:
+Cronotopia operates in **import mode**, **compression mode**, or **server mode**:
 * When any `--import-*` flag is provided, Cronotopia executes the requested imports and exits upon completion.
-* When run without import flags, Cronotopia initializes the AI engine, optionally generates vector embeddings for pending sections (if `--ai-sync` is enabled), and starts the web server.
+* When `--compress` or `--decompress` is provided, Cronotopia performs database compression or inflation and exits.
+* When run without import or compression flags, Cronotopia initializes the AI engine, optionally generates vector embeddings for pending sections (if `--ai-sync` is enabled), and starts the web server.
 
 ### 1. Data Ingestion
 
@@ -83,12 +84,34 @@ Cronotopia operates in **import mode** or **server mode**:
 ./cronotopia --db cronotopia.db --import-wikilite ./wikilite-en.db
 ```
 
-### 2. Server Mode
+### 2. Database Compression (`--compress` / `--decompress`)
+
+Cronotopia supports transparent querying of databases compressed with the seekable Zstandard format. You can compress an existing database to save disk space:
+
+```bash
+# Compress cronotopia.db -> cronotopia.db.zst
+./cronotopia --db cronotopia.db --compress
+```
+
+To decompress a `.zst` database back into a standard SQLite file:
+
+```bash
+# Decompress cronotopia.db.zst -> cronotopia.db
+./cronotopia --db cronotopia.db.zst --decompress
+```
+
+> **Note:** Compressed databases (`.zst`) are strictly read-only. Data ingestion and `--ai-sync` require an uncompressed database.
+
+### 3. Server Mode
 
 Start the web server, tile server, REST API, and MCP endpoint:
 
 ```bash
+# Standard database
 ./cronotopia --db cronotopia.db --web-host 127.0.0.1 --web-port 35248
+
+# Direct read-only execution on compressed database (zero disk extraction)
+./cronotopia --db cronotopia.db.zst --web-host 127.0.0.1 --web-port 35248
 ```
 
 The MapLibre interface will be available at `http://localhost:35248`.
@@ -115,10 +138,11 @@ You can generate embeddings for unindexed article sections prior to launching th
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--db` | `cronotopia.db` | SQLite database file path. |
+| `--db` | `cronotopia.db` | SQLite database file path (accepts `.db` or `.zst`). |
+| `--compress` | `false` | Compress database (`--db`) to seekable zstd (`.zst`). |
+| `--decompress` | `false` | Decompress database (`--db`) from seekable zstd (`.zst`). |
 | `--web-host` | `127.0.0.1` | Web API server listen host. |
 | `--web-port` | `35248` | Web API server listen port. |
-| `--limit` | `20` | Default search result limit. |
 | `--import-wikidata` | `""` | Path or URL to Wikidata dump (`.json`, `.gz`, `.bz2`). |
 | `--import-wikipedia` | `""` | Path or URL to Wikipedia Enterprise HTML dump (`.tar.gz`). |
 | `--import-wikilite` | `""` | Path to a pre-indexed Wikilite SQLite database. |
@@ -148,7 +172,7 @@ Queries records by text, semantic vector, location, or time.
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `query` | string | Search text. |
-| `mode` | string | `hybrid` (default), `lexical` (FTS5 BM25), or `semantic` (vector similarity). |
+| `mode` | string | `hybrid` (default), `lexical` (BM25), or `semantic` (vector similarity). |
 | `latitude` | float | Target latitude for spatial search. |
 | `longitude` | float | Target longitude for spatial search. |
 | `radius` | float | Search radius in kilometers (default: 100). |
@@ -156,7 +180,7 @@ Queries records by text, semantic vector, location, or time.
 | `month` | int | Month (1-12). |
 | `day` | int | Day (1-31). |
 | `range` | string/int | Date matching: `0` (exact), `-1` or `lt` (before), `1` or `gt` (after). |
-| `limit` | int | Maximum results returned (default: 20). |
+| `limit` | int | Maximum results returned (default: 10). |
 
 **Examples:**
 ```bash
