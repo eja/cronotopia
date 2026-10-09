@@ -57,13 +57,10 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			`CREATE INDEX IF NOT EXISTS idx_entities_art ON entities(article_id);`,
 
 			`CREATE TABLE IF NOT EXISTS entity_labels (
-				entity_id INTEGER,
-				lang TEXT,
+				entity_id INTEGER PRIMARY KEY,
 				label TEXT,
-				description TEXT,
-				PRIMARY KEY(entity_id, lang)
+				description TEXT
 			);`,
-			`CREATE INDEX IF NOT EXISTS idx_entity_labels_lookup ON entity_labels(lang, label);`,
 
 			`CREATE TABLE IF NOT EXISTS entity_times (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,14 +69,13 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				year INTEGER NOT NULL,
 				month INTEGER DEFAULT 0,
 				day INTEGER DEFAULT 0,
-				julian_day INTEGER NOT NULL,
-				hour INTEGER DEFAULT 0,
-				minute INTEGER DEFAULT 0,
-				second INTEGER DEFAULT 0
+				julian_day INTEGER NOT NULL
 			);`,
 			`CREATE INDEX IF NOT EXISTS idx_times_entity ON entity_times(entity_id);`,
 			`CREATE INDEX IF NOT EXISTS idx_times_jd ON entity_times(julian_day);`,
 			`CREATE INDEX IF NOT EXISTS idx_times_ymd ON entity_times(year, month, day);`,
+			`CREATE INDEX IF NOT EXISTS idx_times_entity_jd ON entity_times(entity_id, julian_day);`,
+			`CREATE INDEX IF NOT EXISTS idx_times_entity_ymd ON entity_times(entity_id, year, month, day);`,
 
 			`CREATE TABLE IF NOT EXISTS entity_places (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +86,6 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				precision REAL
 			);`,
 			`CREATE INDEX IF NOT EXISTS idx_places_entity ON entity_places(entity_id);`,
-			`CREATE INDEX IF NOT EXISTS idx_places_coords ON entity_places(latitude, longitude);`,
 
 			`CREATE VIRTUAL TABLE IF NOT EXISTS entity_places_rtree USING rtree(
 				id,
@@ -129,17 +124,17 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				chunk_id INTEGER NOT NULL,
 				chunk_position INTEGER NOT NULL
 			);`,
-			`CREATE INDEX IF NOT EXISTS idx_ann_chunk ON vectors_ann_index(chunk_id, chunk_position);`,
+			`CREATE INDEX IF NOT EXISTS idx_ann_chunk ON vectors_ann_index(chunk_id, chunk_position, vectors_id);`,
 
 			`CREATE TABLE IF NOT EXISTS vectors_ann_centroids (
 				id INTEGER PRIMARY KEY,
 				centroid BLOB
 			);`,
 			`CREATE TABLE IF NOT EXISTS vectors_ann_centroid_chunks (
-				centroid_id INTEGER,
-				chunk_id INTEGER
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_ann_centroid ON vectors_ann_centroid_chunks(centroid_id);`,
+				centroid_id INTEGER NOT NULL,
+				chunk_id INTEGER NOT NULL,
+				PRIMARY KEY(centroid_id, chunk_id)
+			) WITHOUT ROWID;`,
 
 			`CREATE TABLE IF NOT EXISTS tensors (
 				layer INTEGER NOT NULL,
@@ -242,9 +237,6 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		isReadOnly: isReadOnly,
 	}
 
-	if lang, err := handler.SettingGet("language"); err == nil && lang != "" {
-		options.language = lang
-	}
 	if model, err := handler.SettingGet("model"); err == nil && model != "" {
 		options.aiModel = model
 	}

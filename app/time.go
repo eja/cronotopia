@@ -17,7 +17,7 @@ func DateToJulianDay(year, month, day int) int64 {
 	return int64(day + (153*m+2)/5 + 365*y + y/4 - y/100 + y/400 - 32045)
 }
 
-func FormatDateTime(y, m, d, h, min, s int) string {
+func FormatDateTime(y, m, d int) string {
 	if y == 0 && m == 0 && d == 0 {
 		return ""
 	}
@@ -32,14 +32,6 @@ func FormatDateTime(y, m, d, h, min, s int) string {
 		if d > 0 {
 			datePart += fmt.Sprintf("-%02d", d)
 		}
-	}
-	if h != 0 || min != 0 || s != 0 {
-		if m == 0 {
-			datePart += "-01-01"
-		} else if d == 0 {
-			datePart += "-01"
-		}
-		datePart += fmt.Sprintf("T%02d:%02d:%02dZ", h, min, s)
 	}
 	return datePart
 }

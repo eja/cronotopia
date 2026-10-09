@@ -46,7 +46,7 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 	defer endTx(&err)
 
 	log.Println("Importing configuration...")
-	configKeys := []string{"language", "annSize", "modelPrefixSearch", "modelPrefixSave"}
+	configKeys := []string{"annSize", "modelPrefixSearch", "modelPrefixSave"}
 	for _, key := range configKeys {
 		_ = sqlitex.Execute(conn, `
 			INSERT OR REPLACE INTO main.settings (key, value)

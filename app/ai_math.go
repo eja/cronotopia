@@ -308,10 +308,9 @@ func l2Norm(x []float32) {
 }
 
 func BytesToFloat32(b []byte) []float32 {
-	if len(b)%4 != 0 {
-		panic("invalid byte slice length for float32 conversion")
-	}
-	res := make([]float32, len(b)/4)
+	validLen := len(b) / 4
+
+	res := make([]float32, validLen)
 	for i := range res {
 		bits := binary.LittleEndian.Uint32(b[i*4 : (i+1)*4])
 		res[i] = math.Float32frombits(bits)

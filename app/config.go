@@ -4,7 +4,6 @@ package main
 
 type Config struct {
 	dbPath              string
-	language            string
 	limit               int
 	log                 bool
 	logFile             string

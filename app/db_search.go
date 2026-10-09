@@ -17,7 +17,6 @@ import (
 )
 
 type SearchParams struct {
-	Lang             string
 	QueryText        string
 	Day, Month, Year int
 	Lat, Lon         float64
@@ -69,6 +68,27 @@ type EntityInfo struct {
 	DateEnd   string
 	YearBegin int
 	YearEnd   int
+}
+
+func getTargetJulianDay(p SearchParams) int64 {
+	m := p.Month
+	d := p.Day
+	if p.Range > 0 && p.Year != 0 {
+		if m == 0 && d == 0 {
+			m = 12
+			d = 31
+		} else if d == 0 {
+			switch m {
+			case 2:
+				d = 28
+			case 4, 6, 9, 11:
+				d = 30
+			default:
+				d = 31
+			}
+		}
+	}
+	return DateToJulianDay(p.Year, m, d)
 }
 
 func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, targetLon float64) EntityInfo {
@@ -124,12 +144,12 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 	}
 
 	type timeRow struct {
-		code               int
-		y, m, d, h, min, s int
-		jd                 int64
+		code    int
+		y, m, d int
+		jd      int64
 	}
 	var times []timeRow
-	_ = sqlitex.Execute(conn, "SELECT prop_code, year, month, day, hour, minute, second, julian_day FROM entity_times WHERE entity_id = ? ORDER BY julian_day ASC", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, "SELECT prop_code, year, month, day, julian_day FROM entity_times WHERE entity_id = ? ORDER BY julian_day ASC", &sqlitex.ExecOptions{
 		Args: []any{entityID},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			times = append(times, timeRow{
@@ -137,10 +157,7 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 				y:    int(stmt.ColumnInt64(1)),
 				m:    int(stmt.ColumnInt64(2)),
 				d:    int(stmt.ColumnInt64(3)),
-				h:    int(stmt.ColumnInt64(4)),
-				min:  int(stmt.ColumnInt64(5)),
-				s:    int(stmt.ColumnInt64(6)),
-				jd:   stmt.ColumnInt64(7),
+				jd:   stmt.ColumnInt64(4),
 			})
 			return nil
 		},
@@ -151,8 +168,8 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 		last := times[len(times)-1]
 		info.YearBegin = first.y
 		info.YearEnd = last.y
-		info.DateBegin = FormatDateTime(first.y, first.m, first.d, first.h, first.min, first.s)
-		info.DateEnd = FormatDateTime(last.y, last.m, last.d, last.h, last.min, last.s)
+		info.DateBegin = FormatDateTime(first.y, first.m, first.d)
+		info.DateEnd = FormatDateTime(last.y, last.m, last.d)
 		if info.Code == 0 {
 			info.Code = first.code
 		}
@@ -165,7 +182,7 @@ func (h *DBHandler) entityMatchesTime(conn *sqlite.Conn, entityID int, p SearchP
 	if p.Year == 0 && p.Month == 0 && p.Day == 0 {
 		return true, 0
 	}
-	targetJD := DateToJulianDay(p.Year, p.Month, p.Day)
+	targetJD := getTargetJulianDay(p)
 	var matched bool
 	var propCode int
 	var query string
@@ -262,11 +279,8 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 	if p.Limit <= 0 {
 		p.Limit = 100
 	}
-	if p.Lang == "" {
-		p.Lang = "en"
-	}
 
-	targetJD := DateToJulianDay(p.Year, p.Month, p.Day)
+	targetJD := getTargetJulianDay(p)
 	candidates := make([]EventResult, 0)
 	seenEntity := make(map[int]bool)
 
@@ -276,28 +290,18 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 			SELECT 
 				p.entity_id, p.prop_code, 
 				p.latitude, p.longitude, 
-				COALESCE(
-					l.label,
-					(SELECT label FROM entity_labels WHERE entity_id = p.entity_id AND lang = 'en' LIMIT 1),
-					(SELECT label FROM entity_labels WHERE entity_id = p.entity_id LIMIT 1),
-					e.article_title,
-					'Q' || p.entity_id
-				) as label,
-				COALESCE(
-					l.description,
-					(SELECT description FROM entity_labels WHERE entity_id = p.entity_id AND lang = 'en' LIMIT 1),
-					(SELECT description FROM entity_labels WHERE entity_id = p.entity_id LIMIT 1),
-					''
-				) as description,
+				COALESCE(l.label, e.article_title, 'Q' || p.entity_id) as label,
+				COALESCE(l.description, '') as description,
 				COALESCE(e.article_id, 0)
-			FROM entity_places p
+			FROM entity_places_rtree r
+			JOIN entity_places p ON r.id = p.id
 			LEFT JOIN entities e ON p.entity_id = e.id
-			LEFT JOIN entity_labels l ON p.entity_id = l.entity_id AND l.lang = ?
-			WHERE p.latitude >= ? AND p.latitude <= ? AND p.longitude >= ? AND p.longitude <= ?
+			LEFT JOIN entity_labels l ON p.entity_id = l.entity_id
+			WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?
 			LIMIT ?
 		`
 		err := sqlitex.Execute(conn, sqlQuery, &sqlitex.ExecOptions{
-			Args: []any{p.Lang, minLat, maxLat, minLon, maxLon, p.Limit * 8},
+			Args: []any{minLat, maxLat, minLon, maxLon, p.Limit * 8},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				entID := int(stmt.ColumnInt64(0))
 				if seenEntity[entID] {
@@ -379,29 +383,18 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 			SELECT 
 				t.entity_id, t.prop_code, 
 				t.day, t.month, t.year, t.julian_day,
-				COALESCE(
-					l.label,
-					(SELECT label FROM entity_labels WHERE entity_id = t.entity_id AND lang = 'en' LIMIT 1),
-					(SELECT label FROM entity_labels WHERE entity_id = t.entity_id LIMIT 1),
-					e.article_title,
-					'Q' || t.entity_id
-				) as label,
-				COALESCE(
-					l.description,
-					(SELECT description FROM entity_labels WHERE entity_id = t.entity_id AND lang = 'en' LIMIT 1),
-					(SELECT description FROM entity_labels WHERE entity_id = t.entity_id LIMIT 1),
-					''
-				) as description,
+				COALESCE(l.label, e.article_title, 'Q' || t.entity_id) as label,
+				COALESCE(l.description, '') as description,
 				COALESCE(e.article_id, 0)
 			FROM entity_times t
 			LEFT JOIN entities e ON t.entity_id = e.id
-			LEFT JOIN entity_labels l ON t.entity_id = l.entity_id AND l.lang = ?
+			LEFT JOIN entity_labels l ON t.entity_id = l.entity_id
 			WHERE %s
 			ORDER BY %s
 			LIMIT ?
 		`, strings.Join(whereClauses, " AND "), orderSQL)
 
-		finalArgs := []any{p.Lang}
+		var finalArgs []any
 		finalArgs = append(finalArgs, args...)
 		if p.Year != 0 && p.Range == 0 {
 			finalArgs = append(finalArgs, targetJD)
@@ -504,37 +497,27 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 			orderSQL = "t.year DESC"
 		}
 
-		whereSQL := "p.latitude >= ? AND p.latitude <= ? AND p.longitude >= ? AND p.longitude <= ? AND " + strings.Join(timeClauses, " AND ")
+		whereSQL := "r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ? AND " + strings.Join(timeClauses, " AND ")
 
 		sqlQuery := fmt.Sprintf(`
 			SELECT 
 				t.entity_id, t.prop_code, 
 				p.latitude, p.longitude, 
 				t.day, t.month, t.year, t.julian_day,
-				COALESCE(
-					l.label,
-					(SELECT label FROM entity_labels WHERE entity_id = t.entity_id AND lang = 'en' LIMIT 1),
-					(SELECT label FROM entity_labels WHERE entity_id = t.entity_id LIMIT 1),
-					e.article_title,
-					'Q' || t.entity_id
-				) as label,
-				COALESCE(
-					l.description,
-					(SELECT description FROM entity_labels WHERE entity_id = t.entity_id AND lang = 'en' LIMIT 1),
-					(SELECT description FROM entity_labels WHERE entity_id = t.entity_id LIMIT 1),
-					''
-				) as description,
+				COALESCE(l.label, e.article_title, 'Q' || t.entity_id) as label,
+				COALESCE(l.description, '') as description,
 				COALESCE(e.article_id, 0)
-			FROM entity_places p
+			FROM entity_places_rtree r
+			JOIN entity_places p ON r.id = p.id
 			JOIN entity_times t ON p.entity_id = t.entity_id
 			LEFT JOIN entities e ON t.entity_id = e.id
-			LEFT JOIN entity_labels l ON t.entity_id = l.entity_id AND l.lang = ?
+			LEFT JOIN entity_labels l ON t.entity_id = l.entity_id
 			WHERE %s
 			ORDER BY %s
 			LIMIT ?
 		`, whereSQL, orderSQL)
 
-		finalArgs := []any{p.Lang, minLat, maxLat, minLon, maxLon}
+		finalArgs := []any{minLat, maxLat, minLon, maxLon}
 		finalArgs = append(finalArgs, timeArgs...)
 		if p.Year != 0 && p.Range == 0 {
 			finalArgs = append(finalArgs, targetJD)
@@ -646,15 +629,16 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 	if hasSpace {
 		minLat, maxLat, minLon, maxLon := BoundingBox(p.Lat, p.Lon, p.RadiusKm)
 		whereSub = append(whereSub, `s.entity_id IN (
-			SELECT pl.entity_id FROM entity_places pl
-			WHERE pl.latitude >= ? AND pl.latitude <= ? AND pl.longitude >= ? AND pl.longitude <= ?
+			SELECT p.entity_id FROM entity_places_rtree r
+			JOIN entity_places p ON r.id = p.id
+			WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?
 		)`)
 		args = append(args, minLat, maxLat, minLon, maxLon)
 	}
 
 	if hasTime {
 		if p.Year != 0 {
-			targetJD := DateToJulianDay(p.Year, p.Month, p.Day)
+			targetJD := getTargetJulianDay(p)
 			if p.Range == 0 {
 				if p.Month > 0 && p.Day > 0 {
 					whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.year = ? AND tm.month = ? AND tm.day = ?)`)

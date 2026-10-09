@@ -72,10 +72,7 @@ func runAPIServer() {
 		lat, _ := strconv.ParseFloat(q.Get("latitude"), 64)
 		lon, _ := strconv.ParseFloat(q.Get("longitude"), 64)
 
-		radStr := q.Get("radius_km")
-		if radStr == "" {
-			radStr = q.Get("radius")
-		}
+		radStr := q.Get("radius")
 		rad, _ := strconv.ParseFloat(radStr, 64)
 
 		yr, _ := strconv.Atoi(q.Get("year"))
@@ -97,14 +94,6 @@ func runAPIServer() {
 			rad = 100.0
 		}
 
-		lang := q.Get("language")
-		if lang == "" {
-			lang = q.Get("lang")
-		}
-		if lang == "" {
-			lang = options.language
-		}
-
 		params := SearchParams{
 			QueryText: query,
 			Lat:       lat,
@@ -115,7 +104,6 @@ func runAPIServer() {
 			Day:       d,
 			Range:     rng,
 			Limit:     limit,
-			Lang:      lang,
 		}
 
 		if !hasText && (hasSpace || hasTime) {
@@ -212,7 +200,7 @@ func parseRange(val string) int {
 	switch v {
 	case "lt", "lte", "<", "<=", "-1":
 		return -1
-	case "gt", "gte", ">", ">=", "+1":
+	case "gt", "gte", ">", ">=", "+1", "1":
 		return 1
 	default:
 		return 0

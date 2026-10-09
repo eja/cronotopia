@@ -175,7 +175,7 @@ async function executeSearch() {
         const center = map.getCenter();
         params.set('latitude', center.lat.toFixed(6));
         params.set('longitude', center.lng.toFixed(6));
-        params.set('radius_km', getMapRadiusKm().toString());
+        params.set('radius', getMapRadiusKm().toString());
     }
 
     try {

@@ -47,8 +47,8 @@ type ExtractedData struct {
 }
 
 type TimeRecord struct {
-	Code                 int
-	Y, M, D, H, Min, Sec int
+	Code    int
+	Y, M, D int
 }
 
 type LinkRecord struct {
@@ -62,7 +62,7 @@ type PlaceRecord struct {
 }
 
 type QueryRecord struct {
-	Lang, Label, Data string
+	Label, Data string
 }
 
 type Entity struct {
@@ -139,21 +139,20 @@ func (h *DBHandler) PostProcessWikidata() error {
 	}
 	defer h.pool.Put(conn)
 
-	log.Println("Populating R*Tree spatial index...")
-	err := sqlitex.Execute(conn, `
-		INSERT OR REPLACE INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
-		SELECT id, latitude, latitude, longitude, longitude FROM entity_places
-	`, nil)
-	if err != nil {
-		log.Printf("Warning updating R*Tree: %v", err)
-	}
+	log.Println("Pruning invalid coordinates and unlabelled entities...")
+	_ = sqlitex.Execute(conn, "DELETE FROM entity_places WHERE latitude < -90.0 OR latitude > 90.0 OR longitude < -180.0 OR longitude > 180.0", nil)
+	_ = sqlitex.Execute(conn, "DELETE FROM entity_places WHERE entity_id NOT IN (SELECT entity_id FROM entity_labels)", nil)
+	_ = sqlitex.Execute(conn, "DELETE FROM entity_times WHERE entity_id NOT IN (SELECT entity_id FROM entity_labels)", nil)
 
-	log.Println("Optimizing database VACUUM...")
-	return sqlitex.Execute(conn, "VACUUM", nil)
+	log.Println("Populating R*Tree spatial index...")
+	return sqlitex.Execute(conn, `
+		INSERT INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
+		SELECT id, latitude, latitude, longitude, longitude 
+		FROM entity_places
+	`, nil)
 }
 
 func runWikidataImport(src string) {
-	langs := strings.Split(options.language, ",")
 	log.Println("Starting Wikidata import...")
 
 	reader, totalSize, bytesRead, err := openInput(src)
@@ -171,7 +170,7 @@ func runWikidataImport(src string) {
 		wikidataDBWorker(dataChan)
 	}()
 
-	parseWikidataStream(reader, dataChan, langs, totalSize, bytesRead)
+	parseWikidataStream(reader, dataChan, totalSize, bytesRead)
 	close(dataChan)
 	wg.Wait()
 
@@ -238,7 +237,7 @@ func openInput(src string) (io.ReadCloser, int64, *int64, error) {
 	return &wrappedReadCloser{Reader: finalReader, Closer: baseReader}, totalSize, bytesRead, nil
 }
 
-func parseWikidataStream(r io.Reader, out chan<- ExtractedData, langs []string, totalSize int64, bytesRead *int64) {
+func parseWikidataStream(r io.Reader, out chan<- ExtractedData, totalSize int64, bytesRead *int64) {
 	scanner := bufio.NewScanner(r)
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 50*1024*1024)
@@ -326,16 +325,26 @@ func parseWikidataStream(r io.Reader, out chan<- ExtractedData, langs []string, 
 		}
 
 		if hasRelevant {
-			for _, lang := range langs {
-				if label, ok := ent.Labels[lang]; ok && strings.TrimSpace(label.Value) != "" {
-					desc := ""
-					if d, ok := ent.Descriptions[lang]; ok {
-						desc = d.Value
+			var label, desc string
+			if l, ok := ent.Labels["en"]; ok && strings.TrimSpace(l.Value) != "" {
+				label = l.Value
+				if d, ok := ent.Descriptions["en"]; ok {
+					desc = d.Value
+				}
+			} else {
+				for lang, l := range ent.Labels {
+					if val := strings.TrimSpace(l.Value); val != "" {
+						label = val
+						if d, ok := ent.Descriptions[lang]; ok {
+							desc = d.Value
+						}
+						break
 					}
-					data.Query = append(data.Query, QueryRecord{lang, label.Value, desc})
 				}
 			}
-			if len(data.Query) > 0 {
+
+			if label != "" {
+				data.Query = append(data.Query, QueryRecord{label, desc})
 				out <- data
 			}
 		}
@@ -383,8 +392,8 @@ func wikidataDBWorker(in <-chan ExtractedData) {
 			})
 		}
 		for _, q := range item.Query {
-			_ = sqlitex.Execute(conn, `INSERT OR REPLACE INTO entity_labels (entity_id, lang, label, description) VALUES (?,?,?,?)`, &sqlitex.ExecOptions{
-				Args: []any{item.ID, q.Lang, q.Label, q.Data},
+			_ = sqlitex.Execute(conn, `INSERT OR REPLACE INTO entity_labels (entity_id, label, description) VALUES (?,?,?)`, &sqlitex.ExecOptions{
+				Args: []any{item.ID, q.Label, q.Data},
 			})
 		}
 
@@ -399,8 +408,9 @@ func wikidataDBWorker(in <-chan ExtractedData) {
 
 	_ = sqlitex.Execute(conn, `
 		INSERT INTO entity_places (entity_id, prop_code, latitude, longitude, precision)
-		SELECT link.id, link.code, p.latitude, p.longitude, p.precision 
+		SELECT DISTINCT link.id, link.code, p.latitude, p.longitude, p.precision 
 		FROM link INNER JOIN entity_places p ON link.value = p.entity_id 
 		WHERE link.code IN (19, 20)
 	`, nil)
+	_ = sqlitex.Execute(conn, "DROP TABLE IF EXISTS link", nil)
 }

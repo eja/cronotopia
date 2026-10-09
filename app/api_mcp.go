@@ -10,8 +10,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 )
+
+const mcpMaxBody = 4 * 1024 * 1024
 
 type jsonRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -26,16 +27,6 @@ type jsonRPCResponse struct {
 	Result  any    `json:"result,omitempty"`
 	Error   any    `json:"error,omitempty"`
 }
-
-type mcpSession struct {
-	id       string
-	sendChan chan string
-}
-
-var (
-	mcpSessions   = make(map[string]*mcpSession)
-	mcpSessionsMu sync.RWMutex
-)
 
 func handleMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -53,17 +44,21 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "POST" {
+		r.Body = http.MaxBytesReader(w, r.Body, mcpMaxBody)
+
 		var req jsonRPCRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad JSON-RPC", 400)
+			http.Error(w, "Bad JSON-RPC or payload too large", 400)
 			return
 		}
+
 		if req.Method == "initialize" {
 			b := make([]byte, 8)
 			rand.Read(b)
 			sessionID = hex.EncodeToString(b)
 			w.Header().Set("Mcp-Session-Id", sessionID)
 		}
+
 		resp := processMCPCall(req)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -75,9 +70,11 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		fmt.Fprintf(w, ":connected\n\n")
+
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
+
 		<-r.Context().Done()
 	}
 }
@@ -103,7 +100,7 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 						"properties": map[string]any{
 							"latitude":  map[string]any{"type": "number"},
 							"longitude": map[string]any{"type": "number"},
-							"radius_km": map[string]any{"type": "number", "default": 50},
+							"radius":    map[string]any{"type": "number", "default": 50},
 							"year":      map[string]any{"type": "integer"},
 							"limit":     map[string]any{"type": "integer", "default": 20},
 						},
@@ -112,12 +109,24 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 				},
 				{
 					"name":        "search_knowledge",
-					"description": "Perform lexical, semantic or hybrid search over Wikipedia and Wikidata items.",
+					"description": "Perform lexical, semantic or hybrid search over Wikipedia articles and sections.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"query": map[string]any{"type": "string"},
-							"limit": map[string]any{"type": "integer", "default": 10},
+							"query": map[string]any{
+								"type":        "string",
+								"description": "Search text query.",
+							},
+							"mode": map[string]any{
+								"type":        "string",
+								"enum":        []string{"hybrid", "lexical", "semantic"},
+								"default":     "hybrid",
+								"description": "Search mode: 'hybrid' (default), 'lexical' (BM25 keyword search), or 'semantic' (vector similarity).",
+							},
+							"limit": map[string]any{
+								"type":    "integer",
+								"default": 10,
+							},
 						},
 						"required": []string{"query"},
 					},
@@ -153,7 +162,7 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 	case "search_events":
 		lat, _ := args["latitude"].(float64)
 		lon, _ := args["longitude"].(float64)
-		rad, _ := args["radius_km"].(float64)
+		rad, _ := args["radius"].(float64)
 		yr, _ := args["year"].(float64)
 		limit, _ := args["limit"].(float64)
 
@@ -171,15 +180,49 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 
 	case "search_knowledge":
 		q, _ := args["query"].(string)
-		limit, _ := args["limit"].(float64)
-		if limit <= 0 {
-			limit = 10
+		mode, _ := args["mode"].(string)
+		if mode == "" {
+			mode = "hybrid"
 		}
-		res, err := db.SearchLexical(q, int(limit))
+
+		limit := 10
+		if l, ok := args["limit"].(float64); ok && l > 0 {
+			limit = int(l)
+		}
+
+		var results []SearchResult
+		var err error
+
+		if mode == "semantic" {
+			if ai {
+				results, err = db.SearchVectors(q, limit)
+			}
+		} else if mode == "lexical" {
+			results, err = db.SearchLexical(q, limit)
+		} else { // hybrid
+			results, err = db.SearchLexical(q, limit)
+			if err == nil && len(results) < limit && ai {
+				sem, _ := db.SearchVectors(q, limit-len(results))
+				seen := make(map[int]bool)
+				for _, r := range results {
+					seen[r.EntityID] = true
+				}
+				for _, r := range sem {
+					if !seen[r.EntityID] {
+						results = append(results, r)
+					}
+				}
+			}
+		}
+
 		if err != nil {
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
 		}
-		data, _ := json.MarshalIndent(res, "", "  ")
+		if results == nil {
+			results = []SearchResult{}
+		}
+
+		data, _ := json.MarshalIndent(results, "", "  ")
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
 
 	case "get_article":

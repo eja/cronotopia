@@ -12,7 +12,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.10.5"
+	Version = "8.10.9"
 )
 
 var (
@@ -30,7 +30,6 @@ func main() {
 	flag.StringVar(&options.wikiliteImport, "import-wikilite", "", "Import pre-indexed Wikilite SQLite database")
 	flag.StringVar(&options.ggufImport, "import-gguf", "", "Import GGUF model directly into the db")
 	flag.StringVar(&options.mbtilesImport, "import-mbtiles", "", "Import MBTiles file into the tiles table")
-	flag.StringVar(&options.language, "language", "en", "Comma-separated language codes")
 	flag.IntVar(&options.limit, "limit", 20, "Maximum search limit")
 
 	flag.BoolVar(&options.aiSync, "ai-sync", false, "Generate vector embeddings for imported articles")
