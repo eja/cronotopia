@@ -84,7 +84,13 @@
             </div>
         </div>
 
-        <div id="map-container">
+        <div id="map-container" class="position-relative">
+            <div id="map-loader" class="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column justify-content-center align-items-center bg-light bg-opacity-75" style="z-index: 1000;">
+                <div class="spinner-border text-primary mb-2" role="status" style="width: 2.5rem; height: 2.5rem;">
+                    <span class="visually-hidden">Loading map...</span>
+                </div>
+                <div class="small text-muted fw-semibold">Loading map...</div>
+            </div>
             <div id="map"></div>
         </div>
     </div>

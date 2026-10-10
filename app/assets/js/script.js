@@ -68,6 +68,7 @@ async function probeMaxZoom(lng, lat) {
 }
 
 async function initMap() {
+    const mapLoader = document.getElementById('map-loader');
     let mapConfig = { min_zoom: 0, max_zoom: 14, center_lng: 12.4964, center_lat: 41.9028, zoom: 4 };
 
     try {
@@ -115,7 +116,21 @@ async function initMap() {
     map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserHeading: true }));
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
-    map.on('load', () => map.resize());
+
+    const hideLoader = () => {
+        if (mapLoader) {
+            mapLoader.style.transition = 'opacity 0.3s ease';
+            mapLoader.style.opacity = '0';
+            setTimeout(() => mapLoader.remove(), 300);
+        }
+    };
+
+    map.once('load', () => {
+        map.resize();
+        hideLoader();
+    });
+
+    setTimeout(hideLoader, 4000);
 }
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
