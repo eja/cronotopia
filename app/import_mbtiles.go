@@ -35,6 +35,12 @@ func runMBTilesImport(db *DBHandler, srcDBPath string) error {
 	}
 	defer endTx(&err)
 
+	log.Println("Clearing existing tiles and map metadata...")
+	if err := sqlitex.Execute(conn, "DELETE FROM main.tiles", nil); err != nil {
+		return fmt.Errorf("failed to clear tiles: %w", err)
+	}
+	_ = sqlitex.Execute(conn, `DELETE FROM main.settings WHERE key IN ('center', 'minzoom', 'maxzoom', 'name', 'description', 'attribution')`, nil)
+
 	log.Println("Importing MBTiles metadata...")
 	var hasMetadata bool
 	_ = sqlitex.Execute(conn, "SELECT 1 FROM mbtiles.sqlite_master WHERE type IN ('table', 'view') AND name = 'metadata'", &sqlitex.ExecOptions{

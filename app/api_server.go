@@ -126,6 +126,8 @@ func runAPIServer() {
 					Code:      ev.Code,
 					DateBegin: ev.DateBegin,
 					DateEnd:   ev.DateEnd,
+					Times:     ev.Times,
+					Places:    ev.Places,
 					Type:      "E",
 					Power:     100.0,
 				})

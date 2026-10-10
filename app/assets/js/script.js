@@ -216,24 +216,6 @@ function renderResults(items) {
         card.className = `card result-card type-${itemType} p-2 shadow-sm`;
         card.dataset.index = idx;
 
-        const hasCoords = typeof item.latitude === 'number' && typeof item.longitude === 'number' && (item.latitude !== 0 || item.longitude !== 0);
-
-        const b = item.date_begin ? String(item.date_begin).trim() : '';
-        const e = item.date_end ? String(item.date_end).trim() : '';
-        const fallbackYear = item.year ? (item.year > 0 ? String(item.year) : `${Math.abs(item.year)} BCE`) : '';
-
-        let dateTagsHtml = '';
-        if (b && e && b !== e) {
-            dateTagsHtml = `<span class="tag-item">${b}</span><span class="tag-item">${e}</span>`;
-        } else if (b || e) {
-            dateTagsHtml = `<span class="tag-item">${b || e}</span>`;
-        } else if (fallbackYear) {
-            dateTagsHtml = `<span class="tag-item">${fallbackYear}</span>`;
-        }
-
-        const propLabel = PROPERTIES[item.code];
-        const propTagHtml = propLabel ? `<span class="tag-prop" title="Matched property">${propLabel}</span>` : '';
-
         const typeConfigs = {
             'E': { char: 'E', title: 'Event' },
             'C': { char: 'L', title: 'Lexical match' },
@@ -241,9 +223,77 @@ function renderResults(items) {
         };
         const currentType = typeConfigs[itemType] || { char: itemType, title: 'Item' };
         const tBadge = `<span class="type-badge type-badge-${itemType}" title="${currentType.title}">${currentType.char}</span>`;
-        const locButton = hasCoords ? `<button type="button" class="btn-pin btn-pin-click" data-index="${idx}" title="Center map">📍</button>` : '';
+
+        let times = Array.isArray(item.times) ? [...item.times] : [];
+        if (times.length === 0 && (item.date_begin || item.date_end || item.year)) {
+            times.push({
+                code: item.code || 585,
+                year: item.year || 0,
+                date: item.date_begin || item.date_end || (item.year ? String(item.year) : '')
+            });
+        }
+
+        let places = Array.isArray(item.places) ? [...item.places] : [];
+        if (places.length === 0 && typeof item.latitude === 'number' && typeof item.longitude === 'number' && (item.latitude !== 0 || item.longitude !== 0)) {
+            places.push({
+                code: item.code || 625,
+                latitude: item.latitude,
+                longitude: item.longitude
+            });
+        }
+
+        let timeBtnHtml = '';
+        let timePopupHtml = '';
+        if (times.length > 0) {
+            timeBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-time-toggle" data-target="time-box-${idx}">Time</button>`;
+            let timeItemsHtml = '';
+            times.forEach(t => {
+                const prop = PROPERTIES[t.code] || `Event P${t.code}`;
+                const val = t.date || (t.year > 0 ? String(t.year) : `${Math.abs(t.year)} BCE`);
+                const y = t.year || '';
+                const m = t.month || '';
+                const d = t.day || '';
+                timeItemsHtml += `
+                    <li class="events-list-item">
+                        <span class="text-muted">${prop}</span>
+                        <button type="button" class="btn-time-link" data-year="${y}" data-month="${m}" data-day="${d}">
+                            ${val}
+                        </button>
+                    </li>
+                `;
+            });
+            timePopupHtml = `
+                <div id="time-box-${idx}" class="dropdown-popup-box time-dropdown-box mt-2" style="display: none;">
+                    <ol class="events-list mb-0 ps-3">${timeItemsHtml}</ol>
+                </div>
+            `;
+        }
+
+        let spaceBtnHtml = '';
+        let spacePopupHtml = '';
+        if (places.length > 0) {
+            spaceBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-space-toggle" data-target="space-box-${idx}">Space</button>`;
+            let spaceItemsHtml = '';
+            places.forEach(p => {
+                const prop = PROPERTIES[p.code] || `Place P${p.code}`;
+                spaceItemsHtml += `
+                    <li class="events-list-item">
+                        <span class="text-muted">${prop}</span>
+                        <button type="button" class="btn-coord-link" data-lat="${p.latitude}" data-lon="${p.longitude}">
+                            ${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}
+                        </button>
+                    </li>
+                `;
+            });
+            spacePopupHtml = `
+                <div id="space-box-${idx}" class="dropdown-popup-box space-dropdown-box mt-2" style="display: none;">
+                    <ol class="events-list mb-0 ps-3">${spaceItemsHtml}</ol>
+                </div>
+            `;
+        }
+
         const canRead = itemType !== 'E' || Boolean(item.article_id);
-        const readButton = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;">Read</button>` : '';
+        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;">Article</button>` : '';
 
         card.innerHTML = `
             <div class="d-flex justify-content-between align-items-start mb-1">
@@ -254,21 +304,85 @@ function renderResults(items) {
                 ${item.snippet || item.text || ''}
             </div>
             <div class="d-flex justify-content-between align-items-center mt-auto pt-1">
-                <div class="d-flex align-items-center flex-wrap gap-1">${propTagHtml}${dateTagsHtml}${locButton}</div>
-                ${readButton}
+                <div class="d-flex align-items-center flex-wrap gap-1">
+                    ${timeBtnHtml}
+                    ${spaceBtnHtml}
+                </div>
+                ${readBtnHtml}
             </div>
+            ${timePopupHtml}
+            ${spacePopupHtml}
         `;
 
         card.addEventListener('click', (ev) => {
-            if (ev.target.closest('.btn-pin-click')) {
+            const timeToggle = ev.target.closest('.btn-time-toggle');
+            if (timeToggle) {
                 ev.stopPropagation();
-                flyToMarker(idx);
+                const targetId = timeToggle.getAttribute('data-target');
+                const box = document.getElementById(targetId);
+                const spaceBox = card.querySelector('.space-dropdown-box');
+                const spaceBtn = card.querySelector('.btn-space-toggle');
+                if (spaceBox) spaceBox.style.display = 'none';
+                if (spaceBtn) spaceBtn.classList.remove('active');
+                if (box) {
+                    const willShow = box.style.display === 'none';
+                    box.style.display = willShow ? 'block' : 'none';
+                    timeToggle.classList.toggle('active', willShow);
+                }
                 return;
             }
+
+            const spaceToggle = ev.target.closest('.btn-space-toggle');
+            if (spaceToggle) {
+                ev.stopPropagation();
+                const targetId = spaceToggle.getAttribute('data-target');
+                const box = document.getElementById(targetId);
+                const timeBox = card.querySelector('.time-dropdown-box');
+                const timeBtn = card.querySelector('.btn-time-toggle');
+                if (timeBox) timeBox.style.display = 'none';
+                if (timeBtn) timeBtn.classList.remove('active');
+                if (box) {
+                    const willShow = box.style.display === 'none';
+                    box.style.display = willShow ? 'block' : 'none';
+                    spaceToggle.classList.toggle('active', willShow);
+                }
+                return;
+            }
+
+            const timeLink = ev.target.closest('.btn-time-link');
+            if (timeLink) {
+                ev.stopPropagation();
+                const y = timeLink.getAttribute('data-year');
+                const m = timeLink.getAttribute('data-month');
+                const d = timeLink.getAttribute('data-day');
+                document.getElementById('input-year').value = (y && y !== '0') ? y : '';
+                document.getElementById('input-month').value = (m && m !== '0') ? m : '';
+                document.getElementById('input-day').value = (d && d !== '0') ? d : '';
+                return;
+            }
+
+            const coordBtn = ev.target.closest('.btn-coord-link');
+            if (coordBtn) {
+                ev.stopPropagation();
+                const lat = parseFloat(coordBtn.getAttribute('data-lat'));
+                const lon = parseFloat(coordBtn.getAttribute('data-lon'));
+                if (!isNaN(lat) && !isNaN(lon) && map) {
+                    map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 10) });
+                }
+                return;
+            }
+
+            if (ev.target.closest('.dropdown-popup-box')) {
+                ev.stopPropagation();
+                return;
+            }
+
             if (ev.target.classList.contains('btn-read')) {
+                ev.stopPropagation();
                 openArticle(item.entity_id, item.article_id);
                 return;
             }
+
             highlightCard(idx);
             highlightMarker(idx);
         });
@@ -300,7 +414,7 @@ function renderMarkers(items) {
         const canRead = itemType !== 'E' || Boolean(item.article_id);
         const entId = item.entity_id || 0;
         const artId = item.article_id || 0;
-        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-primary w-100 py-0" onclick="openArticle(${entId}, ${artId})">Read Article</button>` : '';
+        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-primary w-100 py-0" onclick="openArticle(${entId}, ${artId})">Article</button>` : '';
 
         const popup = new maplibregl.Popup({ offset: [0, -32] }).setHTML(`
             <div class="p-1">

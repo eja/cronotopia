@@ -105,49 +105,68 @@ body, html {
 .type-badge-C { background-color: #0d6efd; }
 .type-badge-V { background-color: #6f42c1; }
 
-.tag-item {
-    display: inline-flex;
-    align-items: center;
+.btn-panel-toggle {
     font-size: 0.76rem;
-    padding: 2px 6px;
+    padding: 2px 7px;
     border-radius: 4px;
     background: #f1f3f5;
-    border: 1px solid #dee2e6;
+    border: 1px solid #ced4da;
     color: #495057;
-    white-space: nowrap;
     line-height: 1.2;
+    transition: all 0.15s ease;
 }
 
-.tag-prop {
-    display: inline-flex;
-    align-items: center;
-    font-size: 0.76rem;
-    padding: 2px 6px;
-    border-radius: 4px;
+.btn-panel-toggle:hover,
+.btn-panel-toggle.active {
     background: #e7f1ff;
-    border: 1px solid #b6d4fe;
-    color: #084298;
-    white-space: nowrap;
-    line-height: 1.2;
+    border-color: #9ec5fe;
+    color: #0d6efd;
 }
 
-.btn-pin {
-    display: inline-flex;
-    align-items: center;
-    font-size: 0.78rem;
-    padding: 2px 6px;
+.dropdown-popup-box {
+    background: #f8f9fa;
+    border: 1px solid #e2e8f0;
     border-radius: 4px;
-    background: #f1f3f5;
+    padding: 6px 8px;
+    font-size: 0.78rem;
+    cursor: default;
+}
+
+.events-list {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.events-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 0;
+    font-size: 0.76rem;
+    border-bottom: 1px dashed #e9ecef;
+}
+
+.events-list-item:last-child {
+    border-bottom: none;
+}
+
+.btn-time-link,
+.btn-coord-link {
+    background: #ffffff;
     border: 1px solid #dee2e6;
-    color: #495057;
+    border-radius: 3px;
+    color: #0d6efd;
+    font-size: 0.72rem;
+    padding: 1px 6px;
     cursor: pointer;
     line-height: 1.2;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: all 0.12s ease;
 }
 
-.btn-pin:hover {
-    background: #e9ecef;
-    border-color: #ced4da;
+.btn-time-link:hover,
+.btn-coord-link:hover {
+    background: #e7f1ff;
+    border-color: #9ec5fe;
 }
 
 .marker-wrapper {

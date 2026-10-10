@@ -25,38 +25,56 @@ type SearchParams struct {
 	Limit            int
 }
 
+type EventTime struct {
+	Code  int    `json:"code"`
+	Year  int    `json:"year"`
+	Month int    `json:"month,omitempty"`
+	Day   int    `json:"day,omitempty"`
+	Date  string `json:"date,omitempty"`
+}
+
+type EventPlace struct {
+	Code      int     `json:"code"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
 type EventResult struct {
-	ID          int     `json:"id"`
-	ArticleID   int     `json:"article_id,omitempty"`
-	Code        int     `json:"code"`
-	Lat         float64 `json:"latitude"`
-	Lon         float64 `json:"longitude"`
-	Day         int     `json:"day"`
-	Month       int     `json:"month"`
-	Year        int     `json:"year"`
-	JulianDay   int64   `json:"julian_day,omitempty"`
-	Label       string  `json:"label"`
-	Description string  `json:"description,omitempty"`
-	DistanceKm  float64 `json:"distance_km,omitempty"`
-	TimeDiff    int64   `json:"time_diff,omitempty"`
-	DateBegin   string  `json:"date_begin,omitempty"`
-	DateEnd     string  `json:"date_end,omitempty"`
+	ID          int          `json:"id"`
+	ArticleID   int          `json:"article_id,omitempty"`
+	Code        int          `json:"code"`
+	Lat         float64      `json:"latitude"`
+	Lon         float64      `json:"longitude"`
+	Day         int          `json:"day"`
+	Month       int          `json:"month"`
+	Year        int          `json:"year"`
+	JulianDay   int64        `json:"julian_day,omitempty"`
+	Label       string       `json:"label"`
+	Description string       `json:"description,omitempty"`
+	DistanceKm  float64      `json:"distance_km,omitempty"`
+	TimeDiff    int64        `json:"time_diff,omitempty"`
+	DateBegin   string       `json:"date_begin,omitempty"`
+	DateEnd     string       `json:"date_end,omitempty"`
+	Times       []EventTime  `json:"times,omitempty"`
+	Places      []EventPlace `json:"places,omitempty"`
 }
 
 type SearchResult struct {
-	ArticleID int     `json:"article_id,omitempty"`
-	EntityID  int     `json:"entity_id,omitempty"`
-	Title     string  `json:"title,omitempty"`
-	Text      string  `json:"text"`
-	Type      string  `json:"type,omitempty"` // T=Title, C=Content, V=Vector, E=Event
-	Power     float64 `json:"power"`
-	Snippet   string  `json:"snippet"`
-	Lat       float64 `json:"latitude,omitempty"`
-	Lon       float64 `json:"longitude,omitempty"`
-	Year      int     `json:"year,omitempty"`
-	Code      int     `json:"code,omitempty"` // Wikidata property code
-	DateBegin string  `json:"date_begin,omitempty"`
-	DateEnd   string  `json:"date_end,omitempty"`
+	ArticleID int          `json:"article_id,omitempty"`
+	EntityID  int          `json:"entity_id,omitempty"`
+	Title     string       `json:"title,omitempty"`
+	Text      string       `json:"text"`
+	Type      string       `json:"type,omitempty"` // T=Title, C=Content, V=Vector, E=Event
+	Power     float64      `json:"power"`
+	Snippet   string       `json:"snippet"`
+	Lat       float64      `json:"latitude,omitempty"`
+	Lon       float64      `json:"longitude,omitempty"`
+	Year      int          `json:"year,omitempty"`
+	Code      int          `json:"code,omitempty"` // Wikidata property code
+	DateBegin string       `json:"date_begin,omitempty"`
+	DateEnd   string       `json:"date_end,omitempty"`
+	Times     []EventTime  `json:"times,omitempty"`
+	Places    []EventPlace `json:"places,omitempty"`
 }
 
 type EntityInfo struct {
@@ -68,6 +86,8 @@ type EntityInfo struct {
 	DateEnd   string
 	YearBegin int
 	YearEnd   int
+	Times     []EventTime
+	Places    []EventPlace
 }
 
 func getTargetJulianDay(p SearchParams) int64 {
@@ -117,6 +137,13 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 
 	if len(places) > 0 {
 		info.HasCoord = true
+		for _, p := range places {
+			info.Places = append(info.Places, EventPlace{
+				Code:      p.code,
+				Latitude:  p.lat,
+				Longitude: p.lon,
+			})
+		}
 		if targetLat != 0 || targetLon != 0 {
 			bestDist := math.MaxFloat64
 			for _, p := range places {
@@ -164,6 +191,15 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 	})
 
 	if len(times) > 0 {
+		for _, t := range times {
+			info.Times = append(info.Times, EventTime{
+				Code:  t.code,
+				Year:  t.y,
+				Month: t.m,
+				Day:   t.d,
+				Date:  FormatDateTime(t.y, t.m, t.d),
+			})
+		}
 		first := times[0]
 		last := times[len(times)-1]
 		info.YearBegin = first.y
@@ -327,6 +363,8 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 					DistanceKm:  dist,
 					DateBegin:   info.DateBegin,
 					DateEnd:     info.DateEnd,
+					Times:       info.Times,
+					Places:      info.Places,
 				})
 				return nil
 			},
@@ -431,6 +469,8 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 					TimeDiff:    timeDiff,
 					DateBegin:   info.DateBegin,
 					DateEnd:     info.DateEnd,
+					Times:       info.Times,
+					Places:      info.Places,
 				})
 				return nil
 			},
@@ -561,6 +601,8 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 					TimeDiff:    timeDiff,
 					DateBegin:   info.DateBegin,
 					DateEnd:     info.DateEnd,
+					Times:       info.Times,
+					Places:      info.Places,
 				})
 				return nil
 			},
@@ -737,6 +779,8 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 				Code:      matchCode,
 				DateBegin: info.DateBegin,
 				DateEnd:   info.DateEnd,
+				Times:     info.Times,
+				Places:    info.Places,
 				Type:      "C",
 			}
 
@@ -926,6 +970,8 @@ func (h *DBHandler) SearchVectors(query string, limit int, searchParams ...Searc
 		res.Code = matchCode
 		res.DateBegin = info.DateBegin
 		res.DateEnd = info.DateEnd
+		res.Times = info.Times
+		res.Places = info.Places
 		res.Type = "V"
 		res.Snippet = Snippet(res.Text, 160)
 		res.Power = math.Max(0, math.Min(100, float64((vd.Distance+1.0)/2.0*100.0)))
