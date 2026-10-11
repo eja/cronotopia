@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -23,6 +24,7 @@ import (
 type DBHandler struct {
 	pool           *sqlitex.Pool
 	isReadOnly     bool
+	isZst          bool
 	zstFile        *os.File
 	zstdDec        *zstd.Decoder
 	seekableReader io.Closer
@@ -69,6 +71,23 @@ func (fi *readerFileInfo) ModTime() time.Time { return time.Time{} }
 func (fi *readerFileInfo) IsDir() bool        { return false }
 func (fi *readerFileInfo) Sys() any           { return nil }
 
+func isZstdHeader(header []byte) bool {
+	if len(header) < 4 {
+		return false
+	}
+	if header[0] == 0x28 && header[1] == 0xb5 && header[2] == 0x2f && header[3] == 0xfd {
+		return true
+	}
+	if header[1] == 0x2a && header[2] == 0x4d && header[3] == 0x18 && (header[0]&0xf0) == 0x50 {
+		return true
+	}
+	return false
+}
+
+func isSQLiteHeader(header []byte) bool {
+	return len(header) >= 16 && string(header[:16]) == "SQLite format 3\x00"
+}
+
 func NewDBHandler(dbPath string) (*DBHandler, error) {
 	isReadOnly := !options.aiSync &&
 		options.wikipediaImport == "" &&
@@ -77,26 +96,71 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		options.ggufImport == "" &&
 		options.mbtilesImport == ""
 
-	if !isReadOnly && strings.HasSuffix(dbPath, ".zst") {
+	var f *os.File
+	var err error
+
+	if strings.HasPrefix(dbPath, "/proc/self/fd") {
+		parts := strings.Split(dbPath, "/")
+		if len(parts) > 0 {
+			if fdNum, parseErr := strconv.Atoi(parts[len(parts)-1]); parseErr == nil {
+				f = os.NewFile(uintptr(fdNum), dbPath)
+			}
+		}
+	}
+
+	if f == nil {
+		f, err = os.Open(dbPath)
+	}
+
+	var isZst bool
+
+	if f != nil {
+		header := make([]byte, 16)
+		n, _ := f.ReadAt(header, 0)
+		header = header[:n]
+
+		if isZstdHeader(header) {
+			isZst = true
+		} else if isSQLiteHeader(header) {
+			isZst = false
+		} else {
+			if !strings.HasPrefix(dbPath, "/proc/self/fd") {
+				f.Close()
+			}
+			return nil, fmt.Errorf("unsupported database format (expected zstd or sqlite): %s", dbPath)
+		}
+	} else {
+		if isReadOnly || !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to open database file: %w", err)
+		}
+		isZst = false
+	}
+
+	if !isReadOnly && isZst {
+		if f != nil && !strings.HasPrefix(dbPath, "/proc/self/fd") {
+			f.Close()
+		}
 		return nil, fmt.Errorf("cannot run modifications or imports on compressed file: %s", dbPath)
 	}
 
 	handler := &DBHandler{
 		isReadOnly: isReadOnly,
+		isZst:      isZst,
 	}
 
 	openPath := dbPath
 
 	if isReadOnly {
-		if _, err := os.Stat(dbPath); err != nil {
-			return nil, fmt.Errorf("database file does not exist: %w", err)
+		stat, err := f.Stat()
+		if err != nil {
+			if !strings.HasPrefix(dbPath, "/proc/self/fd") {
+				f.Close()
+			}
+			return nil, fmt.Errorf("database file stat failed: %w", err)
 		}
 
-		if strings.HasSuffix(dbPath, ".zst") {
-			f, err := os.Open(dbPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to open zst file: %w", err)
-			}
+		if isZst {
+			_, _ = f.Seek(0, io.SeekStart)
 			handler.zstFile = f
 
 			dec, err := zstd.NewReader(nil)
@@ -138,7 +202,19 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			handler.fsHandle = fsHandle
 
 			openPath = fmt.Sprintf("file:db?vfs=%s&mode=ro&immutable=1", vfsName)
+		} else if strings.HasPrefix(dbPath, "/proc/self/fd") {
+			handler.zstFile = f
+
+			vfsName, fsHandle, err := vfs.New(&readerFS{r: f, size: stat.Size()})
+			if err != nil {
+				f.Close()
+				return nil, fmt.Errorf("failed to register VFS reader: %w", err)
+			}
+			handler.fsHandle = fsHandle
+
+			openPath = fmt.Sprintf("file:db?vfs=%s&mode=ro&immutable=1", vfsName)
 		} else {
+			f.Close()
 			cleanPath := filepath.ToSlash(dbPath)
 			if !strings.HasPrefix(cleanPath, "file:") {
 				openPath = fmt.Sprintf("file:%s?immutable=1", cleanPath)
@@ -151,6 +227,9 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			}
 		}
 	} else {
+		if f != nil && !strings.HasPrefix(dbPath, "/proc/self/fd") {
+			f.Close()
+		}
 		initConn, err := sqlite.OpenConn(dbPath, sqlite.OpenReadWrite|sqlite.OpenCreate)
 		if err != nil {
 			return nil, fmt.Errorf("cannot open sqlite database for initialization: %w", err)
@@ -304,6 +383,8 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		initConn.Close()
 	}
 
+	useCustomVFS := isZst || (isReadOnly && strings.HasPrefix(dbPath, "/proc/self/fd"))
+
 	opts := sqlitex.PoolOptions{
 		PoolSize: 16,
 		PrepareConn: func(conn *sqlite.Conn) error {
@@ -313,7 +394,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			}
 			if isReadOnly {
 				pragmas = append(pragmas, "PRAGMA query_only = ON;")
-				if !strings.HasSuffix(dbPath, ".zst") {
+				if !useCustomVFS {
 					pragmas = append(pragmas, "PRAGMA mmap_size = 268435456;")
 				}
 			} else {
