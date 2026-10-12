@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.10.11"
+	Version = "8.10.12"
 )
 
 var (
@@ -60,9 +60,11 @@ func main() {
 
 	if options.logFile != "" {
 		f, err := os.OpenFile(options.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err == nil {
-			log.SetOutput(f)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening log file %q: %v\n", options.logFile, err)
+			os.Exit(1)
 		}
+		log.SetOutput(f)
 	} else if !options.log {
 		log.SetOutput(io.Discard)
 	}
@@ -73,9 +75,6 @@ func main() {
 	}
 
 	if options.compress {
-		if !options.log && options.logFile == "" {
-			log.SetOutput(os.Stderr)
-		}
 		if strings.HasSuffix(options.dbPath, ".zst") {
 			fmt.Fprintf(os.Stderr, "Error: database %q already ends in .zst\n", options.dbPath)
 			os.Exit(1)
@@ -89,9 +88,6 @@ func main() {
 	}
 
 	if options.decompress {
-		if !options.log && options.logFile == "" {
-			log.SetOutput(os.Stderr)
-		}
 		if !strings.HasSuffix(options.dbPath, ".zst") {
 			fmt.Fprintf(os.Stderr, "Error: cannot decompress %q (expected .zst suffix)\n", options.dbPath)
 			os.Exit(1)

@@ -74,7 +74,14 @@ func ImportGGUFFromReader(db *DBHandler, r ReadSeekReaderAt) error {
 	}
 	defer endTx(&err)
 
+	totalTensors := len(parser.Tensors)
+	log.Printf("Importing %d tensors into database...", totalTensors)
+
+	idx := 0
+	nextMilestone := 10
 	for _, ti := range parser.Tensors {
+		idx++
+
 		if ti.Name == "output.weight" {
 			log.Printf("Skipping unused generative tensor: %s", ti.Name)
 			continue
@@ -108,6 +115,14 @@ func ImportGGUFFromReader(db *DBHandler, r ReadSeekReaderAt) error {
 
 		if err := db.AiSaveTensor(conn, tensorRecord); err != nil {
 			return fmt.Errorf("error writing tensor %s: %w", ti.Name, err)
+		}
+
+		if totalTensors > 0 {
+			pct := idx * 100 / totalTensors
+			if pct >= nextMilestone && nextMilestone <= 100 {
+				log.Printf("Tensor import progress: %d%% (%d/%d)", nextMilestone, idx, totalTensors)
+				nextMilestone = (pct/10)*10 + 10
+			}
 		}
 	}
 
