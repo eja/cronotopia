@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.10.10"
+	Version = "8.10.11"
 )
 
 var (
