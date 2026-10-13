@@ -227,13 +227,14 @@ function renderResults(items) {
 
     items.forEach((item, idx) => {
         const card = document.createElement('div');
-        const itemType = item.type || 'C';
+        const itemType = item.type || 'L';
         card.className = `card result-card type-${itemType} p-2 shadow-sm`;
         card.dataset.index = idx;
 
         const typeConfigs = {
             'E': { char: 'E', title: 'Event' },
-            'C': { char: 'L', title: 'Lexical match' },
+            'T': { char: 'T', title: 'Title match' },
+            'L': { char: 'L', title: 'Lexical content match' },
             'V': { char: 'S', title: 'Semantic match' }
         };
         const currentType = typeConfigs[itemType] || { char: itemType, title: 'Item' };
@@ -307,7 +308,7 @@ function renderResults(items) {
             `;
         }
 
-        const canRead = itemType !== 'E' || Boolean(item.article_id);
+        const canRead = (itemType !== 'E' && itemType !== 'T') || Boolean(item.article_id);
         const readBtnHtml = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;">Article</button>` : '';
 
         card.innerHTML = `
@@ -421,12 +422,12 @@ function renderMarkers(items) {
         wrapper.className = 'marker-wrapper';
 
         const pin = document.createElement('div');
-        const itemType = item.type || 'C';
+        const itemType = item.type || 'L';
         pin.className = `custom-pin pin-${itemType}`;
         pin.innerHTML = `<span>${idx + 1}</span>`;
         wrapper.appendChild(pin);
 
-        const canRead = itemType !== 'E' || Boolean(item.article_id);
+        const canRead = (itemType !== 'E' && itemType !== 'T') || Boolean(item.article_id);
         const entId = item.entity_id || 0;
         const artId = item.article_id || 0;
         const readBtnHtml = canRead ? `<button class="btn btn-sm btn-primary w-100 py-0" onclick="openArticle(${entId}, ${artId})">Article</button>` : '';

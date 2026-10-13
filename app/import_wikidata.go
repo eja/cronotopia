@@ -145,11 +145,23 @@ func (h *DBHandler) PostProcessWikidata() error {
 	_ = sqlitex.Execute(conn, "DELETE FROM entity_times WHERE entity_id NOT IN (SELECT entity_id FROM entity_labels)", nil)
 
 	log.Println("Populating R*Tree spatial index...")
-	return sqlitex.Execute(conn, `
+	_ = sqlitex.Execute(conn, "DELETE FROM entity_places_rtree", nil)
+	err := sqlitex.Execute(conn, `
 		INSERT INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
 		SELECT id, latitude, latitude, longitude, longitude 
 		FROM entity_places
 	`, nil)
+	if err != nil {
+		return fmt.Errorf("failed to populate rtree: %w", err)
+	}
+
+	log.Println("Building entity label full-text search index (FTS5)...")
+	err = sqlitex.Execute(conn, "INSERT INTO entity_label_search(entity_label_search) VALUES('rebuild')", nil)
+	if err != nil {
+		return fmt.Errorf("failed to rebuild entity_label_search: %w", err)
+	}
+
+	return nil
 }
 
 func runWikidataImport(src string) {
@@ -377,7 +389,7 @@ func wikidataDBWorker(in <-chan ExtractedData) {
 	for item := range in {
 		for _, t := range item.Times {
 			jd := DateToJulianDay(t.Y, t.M, t.D)
-			_ = sqlitex.Execute(conn, `INSERT INTO entity_times (entity_id, prop_code, year, month, day, julian_day) VALUES (?,?,?,?,?,?)`, &sqlitex.ExecOptions{
+			_ = sqlitex.Execute(conn, `INSERT OR IGNORE INTO entity_times (entity_id, prop_code, year, month, day, julian_day) VALUES (?,?,?,?,?,?)`, &sqlitex.ExecOptions{
 				Args: []any{item.ID, t.Code, t.Y, t.M, t.D, jd},
 			})
 		}

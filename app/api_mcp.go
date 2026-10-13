@@ -109,7 +109,7 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 				},
 				{
 					"name":        "search_knowledge",
-					"description": "Perform lexical, semantic or hybrid search over Wikipedia articles and sections.",
+					"description": "Perform lexical, entity label, semantic or hybrid search over Wikipedia articles and Wikidata entities.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -119,9 +119,9 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 							},
 							"mode": map[string]any{
 								"type":        "string",
-								"enum":        []string{"hybrid", "lexical", "semantic"},
+								"enum":        []string{"hybrid", "entity", "lexical", "semantic"},
 								"default":     "hybrid",
-								"description": "Search mode: 'hybrid' (default), 'lexical' (BM25 keyword search), or 'semantic' (vector similarity).",
+								"description": "Search mode: 'hybrid' (default: entity labels + sections + vectors), 'entity' (label index), 'lexical' (BM25 section search), or 'semantic' (vector similarity).",
 							},
 							"limit": map[string]any{
 								"type":    "integer",
@@ -199,16 +199,34 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 			}
 		} else if mode == "lexical" {
 			results, err = db.SearchLexical(q, limit)
-		} else { // hybrid
-			results, err = db.SearchLexical(q, limit)
-			if err == nil && len(results) < limit && ai {
-				sem, _ := db.SearchVectors(q, limit-len(results))
-				seen := make(map[int]bool)
-				for _, r := range results {
+		} else if mode == "entity" {
+			results, err = db.SearchEntityLabels(q, limit)
+		} else {
+			seen := make(map[int]bool)
+
+			entResults, _ := db.SearchEntityLabels(q, limit)
+			for _, r := range entResults {
+				if !seen[r.EntityID] {
 					seen[r.EntityID] = true
+					results = append(results, r)
 				}
-				for _, r := range sem {
+			}
+
+			if len(results) < limit {
+				lexResults, _ := db.SearchLexical(q, limit-len(results))
+				for _, r := range lexResults {
 					if !seen[r.EntityID] {
+						seen[r.EntityID] = true
+						results = append(results, r)
+					}
+				}
+			}
+
+			if len(results) < limit && ai {
+				semResults, _ := db.SearchVectors(q, limit-len(results))
+				for _, r := range semResults {
+					if !seen[r.EntityID] {
+						seen[r.EntityID] = true
 						results = append(results, r)
 					}
 				}

@@ -16,6 +16,15 @@ func runAPIServer() {
 	mux := http.NewServeMux()
 
 	handleUnifiedSearch := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		q := r.URL.Query()
 
 		if q.Get("map") == "1" || q.Get("config") == "1" {
@@ -144,17 +153,45 @@ func runAPIServer() {
 			results, err = db.SearchVectors(query, limit, params)
 		} else if mode == "lexical" {
 			results, err = db.SearchLexical(query, limit, params)
+		} else if mode == "entity" {
+			results, err = db.SearchEntityLabels(query, limit, params)
 		} else {
-			lex, _ := db.SearchLexical(query, limit, params)
-			results = append(results, lex...)
-			if len(results) < limit && ai {
-				sem, _ := db.SearchVectors(query, limit-len(results), params)
-				seen := make(map[int]bool)
-				for _, r := range results {
+			seen := make(map[int]bool)
+
+			entityQuota := limit / 4
+			if entityQuota < 1 {
+				entityQuota = 1
+			} else if entityQuota > 3 {
+				entityQuota = 3
+			}
+
+			entResults, _ := db.SearchEntityLabels(query, entityQuota, params)
+			for _, r := range entResults {
+				if !seen[r.EntityID] {
 					seen[r.EntityID] = true
+					results = append(results, r)
 				}
-				for _, r := range sem {
+			}
+
+			neededLexical := limit - len(results)
+			if ai && neededLexical > 3 {
+				neededLexical -= 2
+			}
+			if neededLexical > 0 {
+				lexResults, _ := db.SearchLexical(query, neededLexical, params)
+				for _, r := range lexResults {
 					if !seen[r.EntityID] {
+						seen[r.EntityID] = true
+						results = append(results, r)
+					}
+				}
+			}
+
+			if len(results) < limit && ai {
+				semResults, _ := db.SearchVectors(query, limit-len(results), params)
+				for _, r := range semResults {
+					if !seen[r.EntityID] {
+						seen[r.EntityID] = true
 						results = append(results, r)
 					}
 				}

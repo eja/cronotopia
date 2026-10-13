@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
@@ -29,6 +30,17 @@ type DBHandler struct {
 	zstdDec        *zstd.Decoder
 	seekableReader io.Closer
 	fsHandle       io.Closer
+}
+
+type lockedReaderAt struct {
+	mu sync.Mutex
+	r  io.ReaderAt
+}
+
+func (l *lockedReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.ReadAt(p, off)
 }
 
 type readerFS struct {
@@ -192,7 +204,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				return nil, fmt.Errorf("failed to seek start: %w", err)
 			}
 
-			vfsName, fsHandle, err := vfs.New(&readerFS{r: sReader, size: uncompressedSize})
+			vfsName, fsHandle, err := vfs.New(&readerFS{r: &lockedReaderAt{r: sReader}, size: uncompressedSize})
 			if err != nil {
 				sReader.Close()
 				dec.Close()
@@ -205,7 +217,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		} else if strings.HasPrefix(dbPath, "/proc/self/fd") {
 			handler.zstFile = f
 
-			vfsName, fsHandle, err := vfs.New(&readerFS{r: f, size: stat.Size()})
+			vfsName, fsHandle, err := vfs.New(&readerFS{r: &lockedReaderAt{r: f}, size: stat.Size()})
 			if err != nil {
 				f.Close()
 				return nil, fmt.Errorf("failed to register VFS reader: %w", err)
@@ -245,7 +257,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			`CREATE TABLE IF NOT EXISTS settings (
 				key TEXT PRIMARY KEY,
 				value BLOB
-			);`,
+			) WITHOUT ROWID;`,
 
 			`CREATE TABLE IF NOT EXISTS entities (
 				id INTEGER PRIMARY KEY,
@@ -261,19 +273,15 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			);`,
 
 			`CREATE TABLE IF NOT EXISTS entity_times (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				entity_id INTEGER NOT NULL,
 				prop_code INTEGER NOT NULL,
 				year INTEGER NOT NULL,
 				month INTEGER DEFAULT 0,
 				day INTEGER DEFAULT 0,
-				julian_day INTEGER NOT NULL
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_times_entity ON entity_times(entity_id);`,
-			`CREATE INDEX IF NOT EXISTS idx_times_jd ON entity_times(julian_day);`,
-			`CREATE INDEX IF NOT EXISTS idx_times_ymd ON entity_times(year, month, day);`,
-			`CREATE INDEX IF NOT EXISTS idx_times_entity_jd ON entity_times(entity_id, julian_day);`,
-			`CREATE INDEX IF NOT EXISTS idx_times_entity_ymd ON entity_times(entity_id, year, month, day);`,
+				julian_day INTEGER NOT NULL,
+				PRIMARY KEY (entity_id, julian_day, prop_code)
+			) WITHOUT ROWID;`,
+			`CREATE INDEX IF NOT EXISTS idx_times_jd ON entity_times(julian_day, entity_id);`,
 
 			`CREATE TABLE IF NOT EXISTS entity_places (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -305,6 +313,13 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				content,
 				content='sections',
 				content_rowid='id'
+			);`,
+
+			`CREATE VIRTUAL TABLE IF NOT EXISTS entity_label_search USING fts5(
+				label,
+				content='entity_labels',
+				content_rowid='entity_id',
+				tokenize='unicode61 remove_diacritics 2'
 			);`,
 
 			`CREATE TABLE IF NOT EXISTS vectors (
@@ -349,7 +364,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				tile_row INTEGER,
 				tile_data BLOB,
 				PRIMARY KEY(zoom_level, tile_column, tile_row)
-			);`,
+			) WITHOUT ROWID;`,
 		}
 
 		for _, s := range sqls {

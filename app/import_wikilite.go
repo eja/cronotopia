@@ -43,7 +43,11 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 	if err != nil {
 		return err
 	}
-	defer endTx(&err)
+	defer func() {
+		if endTx != nil {
+			endTx(&err)
+		}
+	}()
 
 	log.Println("Importing configuration...")
 	configKeys := []string{"annSize", "modelPrefixSearch", "modelPrefixSave"}
@@ -140,6 +144,7 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 	}
 
 	endTx(&err)
+	endTx = nil
 	if err != nil {
 		return err
 	}

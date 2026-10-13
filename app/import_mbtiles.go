@@ -65,42 +65,11 @@ func runMBTilesImport(db *DBHandler, srcDBPath string) error {
 		},
 	})
 
-	log.Printf("Importing %d tiles...", totalTiles)
-
-	insertStmt, err := conn.Prepare("INSERT OR REPLACE INTO main.tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare insert statement error: %w", err)
-	}
-	defer insertStmt.Finalize()
-
-	var count int64
-	nextMilestone := 10
-
-	err = sqlitex.Execute(conn, "SELECT zoom_level, tile_column, tile_row, tile_data FROM mbtiles.tiles", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			insertStmt.Reset()
-			insertStmt.BindInt64(1, stmt.ColumnInt64(0))
-			insertStmt.BindInt64(2, stmt.ColumnInt64(1))
-			insertStmt.BindInt64(3, stmt.ColumnInt64(2))
-			data := make([]byte, stmt.ColumnLen(3))
-			stmt.ColumnBytes(3, data)
-			insertStmt.BindBytes(4, data)
-
-			if _, stepErr := insertStmt.Step(); stepErr != nil {
-				return stepErr
-			}
-
-			count++
-			if totalTiles > 0 {
-				pct := int(count * 100 / totalTiles)
-				if pct >= nextMilestone && nextMilestone <= 100 {
-					log.Printf("Tile import progress: %d%% (%d / %d tiles)", nextMilestone, count, totalTiles)
-					nextMilestone = (pct/10)*10 + 10
-				}
-			}
-			return nil
-		},
-	})
+	log.Printf("Importing %d tiles directly into database...", totalTiles)
+	err = sqlitex.Execute(conn, `
+		INSERT OR REPLACE INTO main.tiles (zoom_level, tile_column, tile_row, tile_data)
+		SELECT zoom_level, tile_column, tile_row, tile_data FROM mbtiles.tiles
+	`, nil)
 	if err != nil {
 		return fmt.Errorf("import tiles error: %w", err)
 	}
