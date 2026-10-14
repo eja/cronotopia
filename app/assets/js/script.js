@@ -2,7 +2,7 @@ let map;
 let markers = [];
 let lastResults = [];
 let isMobileMap = false;
-let initialMapCenter = [12.4964, 41.9028];
+let initialMapCenter = [9.0100, 40.1200];
 let initialMapZoom = 4;
 
 const PROPERTIES = {
@@ -69,7 +69,7 @@ async function probeMaxZoom(lng, lat) {
 
 async function initMap() {
     const mapLoader = document.getElementById('map-loader');
-    let mapConfig = { min_zoom: 0, max_zoom: 14, center_lng: 12.4964, center_lat: 41.9028, zoom: 4 };
+    let mapConfig = { min_zoom: 0, max_zoom: 14, center_lng: initialMapCenter[0], center_lat: initialMapCenter[1], zoom: 4 };
 
     try {
         const res = await fetch('/api/map');
