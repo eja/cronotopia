@@ -504,11 +504,9 @@ function setModalVisible(show) {
 async function openArticle(entityId, articleId) {
     if (!entityId && !articleId) return;
     const titleEl = document.getElementById('articleModalTitle');
-    const subEl = document.getElementById('articleModalSubtitle');
     const bodyEl = document.getElementById('articleModalBody');
 
     titleEl.textContent = 'Loading article...';
-    subEl.textContent = '';
     bodyEl.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
     setModalVisible(true);
 
@@ -519,7 +517,6 @@ async function openArticle(entityId, articleId) {
         const art = await resp.json();
 
         titleEl.textContent = art.title || 'Untitled';
-        subEl.textContent = art.date_begin ? `Date: ${art.date_begin}` : (art.year ? `Year: ${art.year}` : '');
 
         let html = '';
         if (art.sections && art.sections.length > 0) {

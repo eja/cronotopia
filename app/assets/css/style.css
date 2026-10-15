@@ -105,6 +105,7 @@ body, html {
 .type-badge-T { background-color: #c25e00; }
 .type-badge-L { background-color: #0d6efd; }
 .type-badge-V { background-color: #6f42c1; }
+.type-badge-H { background-color: #087990; }
 
 .btn-panel-toggle {
     font-size: 0.76rem;
@@ -208,6 +209,7 @@ body, html {
 .pin-L { background-color: #0d6efd; }
 .pin-V { background-color: #6f42c1; }
 .pin-T { background-color: #c25e00; }
+.pin-H { background-color: #087990; }
 
 .maplibregl-popup-content {
     max-height: 300px;

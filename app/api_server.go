@@ -156,46 +156,7 @@ func runAPIServer() {
 		} else if mode == "entity" {
 			results, err = db.SearchEntityLabels(query, limit, params)
 		} else {
-			seen := make(map[int]bool)
-
-			entityQuota := limit / 4
-			if entityQuota < 1 {
-				entityQuota = 1
-			} else if entityQuota > 3 {
-				entityQuota = 3
-			}
-
-			entResults, _ := db.SearchEntityLabels(query, entityQuota, params)
-			for _, r := range entResults {
-				if !seen[r.EntityID] {
-					seen[r.EntityID] = true
-					results = append(results, r)
-				}
-			}
-
-			neededLexical := limit - len(results)
-			if ai && neededLexical > 3 {
-				neededLexical -= 2
-			}
-			if neededLexical > 0 {
-				lexResults, _ := db.SearchLexical(query, neededLexical, params)
-				for _, r := range lexResults {
-					if !seen[r.EntityID] {
-						seen[r.EntityID] = true
-						results = append(results, r)
-					}
-				}
-			}
-
-			if len(results) < limit && ai {
-				semResults, _ := db.SearchVectors(query, limit-len(results), params)
-				for _, r := range semResults {
-					if !seen[r.EntityID] {
-						seen[r.EntityID] = true
-						results = append(results, r)
-					}
-				}
-			}
+			results, err = db.SearchHybrid(query, limit, params)
 		}
 
 		if err != nil {

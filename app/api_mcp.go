@@ -202,35 +202,7 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 		} else if mode == "entity" {
 			results, err = db.SearchEntityLabels(q, limit)
 		} else {
-			seen := make(map[int]bool)
-
-			entResults, _ := db.SearchEntityLabels(q, limit)
-			for _, r := range entResults {
-				if !seen[r.EntityID] {
-					seen[r.EntityID] = true
-					results = append(results, r)
-				}
-			}
-
-			if len(results) < limit {
-				lexResults, _ := db.SearchLexical(q, limit-len(results))
-				for _, r := range lexResults {
-					if !seen[r.EntityID] {
-						seen[r.EntityID] = true
-						results = append(results, r)
-					}
-				}
-			}
-
-			if len(results) < limit && ai {
-				semResults, _ := db.SearchVectors(q, limit-len(results))
-				for _, r := range semResults {
-					if !seen[r.EntityID] {
-						seen[r.EntityID] = true
-						results = append(results, r)
-					}
-				}
-			}
+			results, err = db.SearchHybrid(q, limit)
 		}
 
 		if err != nil {
