@@ -88,7 +88,12 @@ func (h *DBHandler) GetMapConfig() MapConfig {
 	defer h.pool.Put(conn)
 
 	config := MapConfig{Zoom: 1, MinZoom: 0, MaxZoom: 14}
-	_ = sqlitex.Execute(conn, "SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, `
+    SELECT 
+      MAX(CASE WHEN key = 'map_minzoom' THEN CAST(value AS INTEGER) END),
+      MAX(CASE WHEN key = 'map_maxzoom' THEN CAST(value AS INTEGER) END)
+    FROM settings
+  `, &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			config.MinZoom = int(stmt.ColumnInt64(0))
 			config.MaxZoom = int(stmt.ColumnInt64(1))
@@ -101,7 +106,7 @@ func (h *DBHandler) GetMapConfig() MapConfig {
 	}
 
 	var centerStr string
-	_ = sqlitex.Execute(conn, "SELECT value FROM settings WHERE key = 'center'", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, "SELECT value FROM settings WHERE key = 'map_center'", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			centerStr = stmt.ColumnText(0)
 			return nil
