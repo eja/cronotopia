@@ -1,9 +1,12 @@
 let map;
 let markers = [];
+let spiderMarkers = [];
+let activeSpiderKey = null;
 let lastResults = [];
 let isMobileMap = false;
 let initialMapCenter = [9.0100, 40.1200];
 let initialMapZoom = 4;
+let activePopup = null;
 
 const PROPERTIES = {
     569:   'Date of birth',
@@ -41,6 +44,40 @@ const PROPERTIES = {
     20:    'Place of death'
 };
 
+function closeActivePopup() {
+    if (activePopup) {
+        activePopup.remove();
+        activePopup = null;
+    }
+}
+
+function showExclusivePopup(popup, lngLat) {
+    if (activePopup && activePopup !== popup) {
+        activePopup.remove();
+    }
+    popup.setLngLat(lngLat).addTo(map);
+    activePopup = popup;
+}
+
+function buildPopupHtml(item, label) {
+    const itemType = item.type || 'L';
+    const canRead = (itemType !== 'E' && itemType !== 'T') || Boolean(item.article_id);
+    const entId = item.entity_id || 0;
+    const artId = item.article_id || 0;
+    const readBtnHtml = canRead ? `<button class="btn btn-sm btn-primary w-100 py-0 mt-2" onclick="openArticle(${entId}, ${artId})">Article</button>` : '';
+
+    return `
+        <div class="p-1">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span class="type-badge type-badge-${itemType}">${label}</span>
+            </div>
+            <h6 class="fw-bold mb-1">${item.title || 'Untitled'}</h6>
+            <p class="small text-muted mb-0">${item.snippet || ''}</p>
+            ${readBtnHtml}
+        </div>
+    `;
+}
+
 function getMapLayers() {
     if (typeof basemaps !== 'undefined' && typeof basemaps.layers === 'function') {
         const flavor = (typeof basemaps.namedFlavor === 'function') ? basemaps.namedFlavor("light") : "light";
@@ -67,6 +104,132 @@ async function probeMaxZoom(lng, lat) {
     return 10;
 }
 
+function haversineDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371.0;
+    const dLat = (lat2 - lat1) * Math.PI / 180.0;
+    const dLon = (lon2 - lon1) * Math.PI / 180.0;
+    const a = Math.sin(dLat/2) ** 2 + Math.cos(lat1 * Math.PI / 180.0) * Math.cos(lat2 * Math.PI / 180.0) * Math.sin(dLon/2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getMapRadiusKm() {
+    const bounds = map.getBounds();
+    const center = map.getCenter();
+    const dLat = haversineDistance(center.lat, center.lng, bounds.getNorth(), center.lng);
+    const dLng = haversineDistance(center.lat, center.lng, center.lat, bounds.getEast());
+    const r = Math.min(dLat, dLng) * 0.8;
+    return Math.max(0.01, parseFloat(r.toFixed(3)));
+}
+
+function createGeoJSONCircle(center, radiusKm, points = 64) {
+    const coords = { latitude: center.lat, longitude: center.lng };
+    const ret = [];
+    const distanceX = radiusKm / (111.320 * Math.cos(coords.latitude * Math.PI / 180));
+    const distanceY = radiusKm / 110.574;
+    for (let i = 0; i < points; i++) {
+        const theta = (i / points) * (2 * Math.PI);
+        ret.push([coords.longitude + distanceX * Math.cos(theta), coords.latitude + distanceY * Math.sin(theta)]);
+    }
+    ret.push(ret[0]);
+    return {
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [ret] }
+    };
+}
+
+function updateSearchCircle(visible, center, radiusKm) {
+    if (!map) return;
+    const source = map.getSource('search-circle-source');
+    if (!source) return;
+    if (!visible || !center || !radiusKm) {
+        source.setData({ type: 'FeatureCollection', features: [] });
+        return;
+    }
+    source.setData(createGeoJSONCircle(center, radiusKm));
+}
+
+function updateSpiderLegs(features) {
+    if (!map) return;
+    const source = map.getSource('spider-legs-source');
+    if (!source) return;
+    source.setData({ type: 'FeatureCollection', features: features || [] });
+}
+
+function collapseSpider() {
+    spiderMarkers.forEach(m => m?.marker?.remove());
+    spiderMarkers = [];
+    activeSpiderKey = null;
+    updateSpiderLegs([]);
+}
+
+function spiderfyGroup(group) {
+    collapseSpider();
+    if (!map || !group || group.entries.length <= 1) return;
+
+    const count = group.entries.length;
+    const centerPt = map.project([group.longitude, group.latitude]);
+    const legFeatures = [];
+    activeSpiderKey = `${group.latitude.toFixed(4)},${group.longitude.toFixed(4)}`;
+
+    group.entries.forEach(({ item, idx }, i) => {
+        let r, theta;
+        if (count <= 8) {
+            r = 54;
+            theta = (2 * Math.PI * i) / count - Math.PI / 2;
+        } else {
+            r = 38 + 9 * i;
+            theta = i * 0.85;
+        }
+
+        const px = centerPt.x + r * Math.cos(theta);
+        const py = centerPt.y + r * Math.sin(theta);
+        const targetPos = map.unproject([px, py]);
+
+        legFeatures.push({
+            type: 'Feature',
+            geometry: {
+                type: 'LineString',
+                coordinates: [
+                    [group.longitude, group.latitude],
+                    [targetPos.lng, targetPos.lat]
+                ]
+            }
+        });
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'marker-wrapper';
+
+        const itemType = item.type || 'L';
+        const label = `${itemType}${idx + 1}`;
+        const pin = document.createElement('div');
+        pin.className = `custom-pin pin-${itemType}`;
+        pin.innerHTML = `<span>${label}</span>`;
+        wrapper.appendChild(pin);
+
+        const popup = new maplibregl.Popup({ offset: [0, -32], closeOnClick: false })
+            .setHTML(buildPopupHtml(item, label));
+
+        popup.on('close', () => {
+            if (activePopup === popup) activePopup = null;
+        });
+
+        const sMarker = new maplibregl.Marker({ element: wrapper, anchor: 'bottom' })
+            .setLngLat([targetPos.lng, targetPos.lat])
+            .addTo(map);
+
+        wrapper.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showExclusivePopup(popup, [targetPos.lng, targetPos.lat]);
+            highlightCard(idx);
+        });
+        wrapper.addEventListener('mouseenter', () => highlightCard(idx));
+
+        spiderMarkers.push({ idx, marker: sMarker, popup, lngLat: [targetPos.lng, targetPos.lat], el: wrapper });
+    });
+
+    updateSpiderLegs(legFeatures);
+}
+
 async function initMap() {
     const mapLoader = document.getElementById('map-loader');
     let mapConfig = { min_zoom: 0, max_zoom: 14, center_lng: initialMapCenter[0], center_lat: initialMapCenter[1], zoom: 4 };
@@ -85,7 +248,7 @@ async function initMap() {
         } else {
             mapConfig.max_zoom = await probeMaxZoom(mapConfig.center_lng, mapConfig.center_lat);
         }
-    } catch (e) {
+    } catch (_) {
         mapConfig.max_zoom = await probeMaxZoom(mapConfig.center_lng, mapConfig.center_lat);
     }
 
@@ -126,6 +289,54 @@ async function initMap() {
     };
 
     map.once('load', () => {
+        map.addSource('search-circle-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+        map.addLayer({
+            id: 'search-circle-fill',
+            type: 'fill',
+            source: 'search-circle-source',
+            paint: { 'fill-color': '#0d6efd', 'fill-opacity': 0.12 }
+        });
+        map.addLayer({
+            id: 'search-circle-stroke',
+            type: 'line',
+            source: 'search-circle-source',
+            paint: { 'line-color': '#0d6efd', 'line-width': 2, 'line-dasharray': [2, 2] }
+        });
+
+        map.addSource('spider-legs-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+        map.addLayer({
+            id: 'spider-legs-layer',
+            type: 'line',
+            source: 'spider-legs-source',
+            paint: { 'line-color': '#495057', 'line-width': 1.5, 'line-dasharray': [2, 2] }
+        });
+
+        map.on('move', () => {
+            if (document.getElementById('select-visible-map').value === 'true') {
+                updateSearchCircle(true, map.getCenter(), getMapRadiusKm());
+            }
+        });
+
+        map.on('click', () => {
+            closeActivePopup();
+            if (activeSpiderKey) collapseSpider();
+        });
+
+        map.on('zoomstart', () => {
+            closeActivePopup();
+            collapseSpider();
+        });
+        map.on('movestart', () => {
+            closeActivePopup();
+            collapseSpider();
+        });
+
         map.resize();
         hideLoader();
     });
@@ -133,21 +344,9 @@ async function initMap() {
     setTimeout(hideLoader, 4000);
 }
 
-function haversineDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371.0;
-    const dLat = (lat2 - lat1) * Math.PI / 180.0;
-    const dLon = (lon2 - lon1) * Math.PI / 180.0;
-    const a = Math.sin(dLat/2) ** 2 + Math.cos(lat1 * Math.PI / 180.0) * Math.cos(lat2 * Math.PI / 180.0) * Math.sin(dLon/2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function getMapRadiusKm() {
-    const center = map.getCenter();
-    const ne = map.getBounds().getNorthEast();
-    return Math.max(1, Math.round(haversineDistance(center.lat, center.lng, ne.lat, ne.lng)));
-}
-
 function clearMarkers() {
+    closeActivePopup();
+    collapseSpider();
     markers.forEach(m => m?.marker?.remove());
     markers = [];
 }
@@ -187,9 +386,13 @@ async function executeSearch() {
 
     if (restrictMap && map) {
         const center = map.getCenter();
+        const radius = getMapRadiusKm();
+        updateSearchCircle(true, center, radius);
         params.set('latitude', center.lat.toFixed(6));
         params.set('longitude', center.lng.toFixed(6));
-        params.set('radius', getMapRadiusKm().toString());
+        params.set('radius', radius.toString());
+    } else {
+        updateSearchCircle(false);
     }
 
     try {
@@ -205,7 +408,7 @@ async function executeSearch() {
 
         renderResults(lastResults);
         renderMarkers(lastResults);
-    } catch (err) {
+    } catch (_) {
         countEl.textContent = 'Error during search';
         metaEl.textContent = '0 items';
         placeholder.innerHTML = '<p class="text-danger py-5">An error occurred while fetching results.</p>';
@@ -227,18 +430,19 @@ function renderResults(items) {
     items.forEach((item, idx) => {
         const card = document.createElement('div');
         const itemType = item.type || 'L';
+        const label = `${itemType}${idx + 1}`;
         card.className = `card result-card type-${itemType} p-2 shadow-sm`;
         card.dataset.index = idx;
 
         const typeConfigs = {
-            'E': { char: 'E', title: 'Event' },
-            'T': { char: 'T', title: 'Title match' },
-            'L': { char: 'L', title: 'Lexical content match' },
-            'S': { char: 'S', title: 'Semantic match' },
-            'H': { char: 'H', title: 'Hybrid match' }
+            'E': { title: 'Event' },
+            'T': { title: 'Title match' },
+            'L': { title: 'Lexical content match' },
+            'S': { title: 'Semantic match' },
+            'H': { title: 'Hybrid match' }
         };
-        const currentType = typeConfigs[itemType] || { char: itemType, title: 'Item' };
-        const tBadge = `<span class="type-badge type-badge-${itemType}" title="${currentType.title}">${currentType.char}</span>`;
+        const currentType = typeConfigs[itemType] || { title: 'Item' };
+        const tBadge = `<span class="type-badge type-badge-${itemType}" title="${currentType.title}">${label}</span>`;
 
         let times = Array.isArray(item.times) ? [...item.times] : [];
         if (times.length === 0 && (item.date_begin || item.date_end || item.year)) {
@@ -334,8 +538,7 @@ function renderResults(items) {
             const timeToggle = ev.target.closest('.btn-time-toggle');
             if (timeToggle) {
                 ev.stopPropagation();
-                const targetId = timeToggle.getAttribute('data-target');
-                const box = document.getElementById(targetId);
+                const box = document.getElementById(timeToggle.getAttribute('data-target'));
                 const spaceBox = card.querySelector('.space-dropdown-box');
                 const spaceBtn = card.querySelector('.btn-space-toggle');
                 if (spaceBox) spaceBox.style.display = 'none';
@@ -351,8 +554,7 @@ function renderResults(items) {
             const spaceToggle = ev.target.closest('.btn-space-toggle');
             if (spaceToggle) {
                 ev.stopPropagation();
-                const targetId = spaceToggle.getAttribute('data-target');
-                const box = document.getElementById(targetId);
+                const box = document.getElementById(spaceToggle.getAttribute('data-target'));
                 const timeBox = card.querySelector('.time-dropdown-box');
                 const timeBtn = card.querySelector('.btn-time-toggle');
                 if (timeBox) timeBox.style.display = 'none';
@@ -400,7 +602,7 @@ function renderResults(items) {
             }
 
             highlightCard(idx);
-            highlightMarker(idx);
+            flyToMarker(idx);
         });
 
         card.addEventListener('mouseenter', () => highlightMarker(idx));
@@ -410,62 +612,116 @@ function renderResults(items) {
 }
 
 function renderMarkers(items) {
-    markers.forEach(m => m?.marker?.remove());
-    markers = [];
+    clearMarkers();
     if (!map) return;
 
+    const groups = new Map();
     items.forEach((item, idx) => {
         const hasCoords = typeof item.latitude === 'number' && typeof item.longitude === 'number' && (item.latitude !== 0 || item.longitude !== 0);
         if (!hasCoords) return;
+        const key = `${item.latitude.toFixed(4)},${item.longitude.toFixed(4)}`;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                latitude: item.latitude,
+                longitude: item.longitude,
+                entries: []
+            });
+        }
+        groups.get(key).entries.push({ item, idx });
+    });
 
+    groups.forEach((group, key) => {
         const wrapper = document.createElement('div');
-        wrapper.className = 'marker-wrapper';
+        const count = group.entries.length;
+        const isCluster = count > 1;
 
-        const pin = document.createElement('div');
-        const itemType = item.type || 'L';
-        pin.className = `custom-pin pin-${itemType}`;
-        pin.innerHTML = `<span>${idx + 1}</span>`;
-        wrapper.appendChild(pin);
+        if (isCluster) {
+            wrapper.className = 'marker-wrapper cluster-wrapper';
+            const circle = document.createElement('div');
+            circle.className = 'marker-cluster-circle';
+            circle.innerText = count.toString();
+            wrapper.appendChild(circle);
+        } else {
+            wrapper.className = 'marker-wrapper';
+            const entry = group.entries[0];
+            const firstType = entry.item.type || 'L';
+            const label = `${firstType}${entry.idx + 1}`;
+            const pin = document.createElement('div');
+            pin.className = `custom-pin pin-${firstType}`;
+            pin.innerHTML = `<span>${label}</span>`;
+            wrapper.appendChild(pin);
+        }
 
-        const canRead = (itemType !== 'E' && itemType !== 'T') || Boolean(item.article_id);
-        const entId = item.entity_id || 0;
-        const artId = item.article_id || 0;
-        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-primary w-100 py-0" onclick="openArticle(${entId}, ${artId})">Article</button>` : '';
-
-        const popup = new maplibregl.Popup({ offset: [0, -32] }).setHTML(`
-            <div class="p-1">
-                <h6 class="fw-bold mb-1">${item.title || 'Untitled'}</h6>
-                <p class="small text-muted mb-2">${item.snippet || ''}</p>
-                ${readBtnHtml}
-            </div>
-        `);
-
-        const marker = new maplibregl.Marker({ element: wrapper, anchor: 'bottom' })
-            .setLngLat([item.longitude, item.latitude])
-            .setPopup(popup)
+        const marker = new maplibregl.Marker({ element: wrapper, anchor: isCluster ? 'center' : 'bottom' })
+            .setLngLat([group.longitude, group.latitude])
             .addTo(map);
 
-        marker.getElement().addEventListener('click', () => highlightCard(idx));
-        markers.push({ idx, marker, el: wrapper });
+        let popup = null;
+        if (!isCluster) {
+            const entry = group.entries[0];
+            const firstType = entry.item.type || 'L';
+            const label = `${firstType}${entry.idx + 1}`;
+
+            popup = new maplibregl.Popup({ offset: [0, -32], closeOnClick: false })
+                .setHTML(buildPopupHtml(entry.item, label));
+
+            popup.on('close', () => {
+                if (activePopup === popup) activePopup = null;
+            });
+
+            wrapper.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showExclusivePopup(popup, [group.longitude, group.latitude]);
+                highlightCard(entry.idx);
+            });
+        } else {
+            wrapper.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeActivePopup();
+                if (activeSpiderKey === key) {
+                    collapseSpider();
+                } else {
+                    spiderfyGroup(group);
+                }
+            });
+        }
+
+        const indices = group.entries.map(e => e.idx);
+        markers.push({ key, group, indices, marker, popup, lngLat: [group.longitude, group.latitude], el: wrapper });
     });
 }
 
 function flyToMarker(idx) {
     highlightCard(idx);
-    highlightMarker(idx);
-    const mObj = markers.find(m => m.idx === idx);
+    const mObj = markers.find(m => m.indices.includes(idx));
     if (mObj && map) {
         map.flyTo({ center: mObj.marker.getLngLat(), zoom: Math.max(map.getZoom(), 8) });
-        mObj.marker.togglePopup();
+        if (mObj.group && mObj.group.entries.length > 1) {
+            spiderfyGroup(mObj.group);
+            const sObj = spiderMarkers.find(m => m.idx === idx);
+            if (sObj) {
+                showExclusivePopup(sObj.popup, sObj.lngLat);
+                sObj.el.classList.add('highlighted');
+            }
+        } else if (mObj.popup) {
+            showExclusivePopup(mObj.popup, mObj.lngLat);
+            highlightMarker(idx);
+        }
     }
 }
 
 function highlightMarker(idx) {
-    markers.find(m => m.idx === idx)?.el.classList.add('highlighted');
+    const sObj = spiderMarkers.find(m => m.idx === idx);
+    if (sObj) {
+        sObj.el.classList.add('highlighted');
+        return;
+    }
+    markers.find(m => m.indices.includes(idx))?.el.classList.add('highlighted');
 }
 
 function unhighlightMarker(idx) {
-    markers.find(m => m.idx === idx)?.el.classList.remove('highlighted');
+    spiderMarkers.find(m => m.idx === idx)?.el.classList.remove('highlighted');
+    markers.find(m => m.indices.includes(idx))?.el.classList.remove('highlighted');
 }
 
 function highlightCard(idx) {
@@ -528,7 +784,7 @@ async function openArticle(entityId, articleId) {
             html = '<p class="text-muted">No content available for this entry.</p>';
         }
         bodyEl.innerHTML = html;
-    } catch (e) {
+    } catch (_) {
         titleEl.textContent = 'Error';
         bodyEl.innerHTML = '<div class="alert alert-danger">Could not load article content.</div>';
     }
@@ -547,6 +803,14 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(id).addEventListener('keydown', (e) => {
             if (e.key === 'Enter') executeSearch();
         });
+    });
+
+    document.getElementById('select-visible-map').addEventListener('change', (e) => {
+        if (e.target.value === 'true' && map) {
+            updateSearchCircle(true, map.getCenter(), getMapRadiusKm());
+        } else {
+            updateSearchCircle(false);
+        }
     });
 
     const closeModal = () => setModalVisible(false);
