@@ -24,7 +24,7 @@ The system includes a pure Go execution engine for quantized GGUF embedding mode
     *   Native Go implementation of Qwen3 transformer inference on CPU for zero-dependency query embedding at search time.
     *   Configurable between low-RAM layer-by-layer reading and cached RAM execution.
     *   Approximate Nearest Neighbor (ANN) index generation using Matryoshka Representation Learning (MRL) dimension reduction.
-    *   Hybrid retrieval combining BM25 full-text scoring, vector cosine distance, and spatio-temporal filters.
+    *   Hybrid retrieval combining BM25 full-text scoring, vector cosine distance, and spatio-temporal filters via Reciprocal Rank Fusion (RRF).
     *   Optional support for external embedding APIs.
 *   **Spatio-Temporal Queries:** Fast spatial bounding-box checks using SQLite R*Tree, Haversine distance calculations, and Julian day calendar conversions for historical dates (exact date, before, after).
 *   **Tile Server & Web UI:** Serves vector tiles (PBF/MVT) directly to an embedded MapLibre GL frontend.
@@ -49,10 +49,11 @@ go build -o cronotopia .
 
 ## Usage
 
-Cronotopia operates in **import mode**, **compression mode**, or **server mode**:
-* When any `--import-*` flag is provided, Cronotopia executes the requested imports and exits upon completion.
-* When `--compress` or `--decompress` is provided, Cronotopia performs database compression or inflation and exits.
-* When run without import or compression flags, Cronotopia initializes the AI engine, optionally generates vector embeddings for pending sections (if `--ai-sync` is enabled), and starts the web server.
+Cronotopia operates in one of the following execution modes:
+* **Import Mode:** When any `--import-*` flag is provided, Cronotopia executes the requested imports and exits.
+* **Compression Mode:** When `--compress` or `--decompress` is provided, Cronotopia performs database compression or decompression and exits.
+* **AI Synchronization Mode:** When `--ai-sync` is provided, Cronotopia generates vector embeddings for pending sections, computes the ANN index clusters (if `--ai-ann` is set), and exits.
+* **Server Mode:** When run without import, compression, or sync flags, Cronotopia initializes the AI engine and starts the web, tile, and MCP servers.
 
 ### 1. Data Ingestion
 
@@ -102,7 +103,22 @@ To decompress a `.zst` database back into a standard SQLite file:
 
 > **Note:** Compressed databases (`.zst`) are strictly read-only. Data ingestion and `--ai-sync` require an uncompressed database.
 
-### 3. Server Mode
+### 3. Generating Embeddings (`--ai-sync`)
+
+You can generate vector embeddings and build the ANN index for all imported sections prior to launching the server.
+
+> **Performance Note:**
+> * **Local Pure-Go Inference:** Optimized for runtime query execution during searches (single sentences on CPU with zero dependencies).
+> * **Batch Synchronization (`--ai-sync`):** Processing thousands of article passages locally on CPU can take a significant amount of time. For large dumps, using an accelerated external API endpoint (`--ai-api`) is **strongly recommended** for high ingestion throughput.
+
+```bash
+# Batch generate embeddings via external API and build ANN index
+./cronotopia --db cronotopia.db --ai-sync \
+  --ai-api --ai-api-url "http://localhost:8080/v1/embeddings" \
+  --ai-model "Qwen3-Embedding-0.6B-Q8_0"
+```
+
+### 4. Server Mode
 
 Start the web server, tile server, REST API, and MCP endpoint:
 
@@ -115,20 +131,6 @@ Start the web server, tile server, REST API, and MCP endpoint:
 ```
 
 The MapLibre interface will be available at `http://localhost:35248`.
-
-#### Syncing Embeddings on Startup
-
-You can generate embeddings for unindexed article sections prior to launching the server.
-
-> **Performance Note:**
-> * **Local Pure-Go Inference:** Optimized for runtime query execution during searches (single sentences on CPU with zero dependencies).
-> * **Batch Synchronization (`--ai-sync`):** Processing thousands of article passages locally on CPU can take a significant amount of time. For large dumps, using an accelerated external API endpoint (`--ai-api`) is **strongly recommended** for high ingestion throughput.
-
-```bash
-./cronotopia --db cronotopia.db --ai-sync \
-  --ai-api --ai-api-url "http://localhost:8080/v1/embeddings" \
-  --ai-model "Qwen3-Embedding-0.6B-Q8_0"
-```
 
 ## Command-Line Options
 
@@ -144,7 +146,7 @@ You can generate embeddings for unindexed article sections prior to launching th
 | `--import-wikilite` | `""` | Path to a pre-indexed Wikilite SQLite database. |
 | `--import-mbtiles` | `""` | Path to an MBTiles file. |
 | `--import-gguf` | `""` | Path to a GGUF model file. |
-| `--ai-sync` | `false` | Generate vector embeddings for unindexed sections. |
+| `--ai-sync` | `false` | Generate vector embeddings and ANN index for unindexed sections, then exit. |
 | `--ai-ann` | `true` | Generate ANN clustered vector index during embedding sync. |
 | `--ai-ann-size` | `64` | MRL Matryoshka dimensionality for vector indexing. |
 | `--ai-cache` | `false` | Cache model weights in memory. |
@@ -161,22 +163,29 @@ You can generate embeddings for unindexed article sections prior to launching th
 
 ### Search: `GET /api` or `GET /api/search`
 
-Queries records by text, semantic vector, location, or time.
+Queries records by text, semantic vector, entity label, location, or time.
 
 **Parameters:**
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `query` | string | Search text. |
-| `mode` | string | `hybrid` (default), `lexical` (BM25), or `semantic` (vector similarity). |
+| `mode` | string | Search mode: `hybrid` (default), `entity` (label index), `lexical` (BM25 section search), or `semantic` (vector similarity). |
 | `latitude` | float | Target latitude for spatial search. |
 | `longitude` | float | Target longitude for spatial search. |
 | `radius` | float | Search radius in kilometers (default: 100). |
 | `year` | int | Astronomical year (negative numbers for BCE). |
 | `month` | int | Month (1-12). |
 | `day` | int | Day (1-31). |
-| `range` | string/int | Date matching: `0` (exact), `-1` or `lt` (before), `1` or `gt` (after). |
+| `range` | string/int | Date matching: `0` (exact), `-1`, `lt`, `lte`, `<` (before), `1`, `gt`, `gte`, `>` (after). |
 | `limit` | int | Maximum results returned (default: 10). |
+
+**Result Object `type` Field:**
+* `E`: Event (Wikidata temporal/spatial event match)
+* `T`: Entity title/label match
+* `L`: Lexical BM25 section match
+* `S`: Semantic vector match
+* `H`: Hybrid match (combined via Reciprocal Rank Fusion)
 
 **Examples:**
 ```bash
@@ -188,24 +197,28 @@ curl "http://localhost:35248/api?query=Renaissance+artists&latitude=43.7696&long
 
 # Vector semantic search
 curl "http://localhost:35248/api?query=ancient+naval+warfare&mode=semantic"
+
+# Entity label search
+curl "http://localhost:35248/api?query=Albert+Einstein&mode=entity"
 ```
 
-### Article Retrieval: `GET /api/article`
+### Article Retrieval: `GET /api/article` (or `GET /api`)
 
-Retrieves Wikipedia sections, coordinates, and dates for an entity.
+Retrieves Wikipedia sections, coordinates, and dates for an entity or article.
 
 **Parameters:**
 *   `id`: Entity ID (e.g. `8467` for Q8467) or Wikipedia article ID.
-*   `entity_id`: Filter by Wikidata entity ID.
-*   `article_id`: Filter by Wikipedia article ID.
+*   `entity_id`: Filter specifically by Wikidata entity ID.
+*   `article_id`: Filter specifically by Wikipedia article ID.
 
 ```bash
 curl "http://localhost:35248/api/article?id=8467"
+curl "http://localhost:35248/api?entity_id=8467"
 ```
 
 ### Map Metadata and Tiles
 
-*   `GET /api/map`: Returns center coordinates and zoom range from database settings.
+*   `GET /api/map` (or `GET /api?map=1`): Returns center coordinates and zoom range from database settings.
 *   `GET /tiles/{z}/{x}/{y}.pbf`: Serves vector tiles directly from SQLite.
 
 ## Model Context Protocol (MCP)
@@ -223,10 +236,10 @@ Cronotopia provides an MCP endpoint at `/mcp` supporting JSON-RPC 2.0 over HTTP 
         *   `year` (integer, optional)
         *   `limit` (integer, optional, default: 20)
 2.  **`search_knowledge`**
-    *   Query indexed Wikipedia articles and sections using hybrid, lexical, or semantic search.
+    *   Query indexed Wikipedia articles and sections using hybrid, entity label, lexical, or semantic search.
     *   Arguments:
         *   `query` (string, required): Search text.
-        *   `mode` (string, optional, default: `"hybrid"`): `"hybrid"`, `"lexical"`, or `"semantic"`.
+        *   `mode` (string, optional, default: `"hybrid"`): `"hybrid"`, `"entity"`, `"lexical"`, or `"semantic"`.
         *   `limit` (integer, optional, default: 10): Maximum results returned.
 3.  **`get_article`**
     *   Retrieve full Wikipedia article sections by ID or Wikidata QID integer.
