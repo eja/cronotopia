@@ -73,6 +73,10 @@ func loadModel(p *GGUFParser) (*qwen3Model, error) {
 				return int(v)
 			case int64:
 				return int(v)
+			case float64:
+				return int(v)
+			case int:
+				return v
 			}
 		}
 		return fallback
@@ -192,6 +196,45 @@ func loadModel(p *GGUFParser) (*qwen3Model, error) {
 	return m, nil
 }
 
+func swigluMLP(x []float32, lw *qwen3Layer, seqLen int) []float32 {
+	H := cfgHiddenSize
+	I := cfgIntermediateSize
+
+	var gateProj, upProj, downProj Tensor
+	var err error
+
+	if !options.aiCache {
+		gateProj, err = lw.parser.GetTensor(fmt.Sprintf("blk.%d.ffn_gate.weight", lw.idx))
+		if err != nil {
+			return nil
+		}
+		upProj, err = lw.parser.GetTensor(fmt.Sprintf("blk.%d.ffn_up.weight", lw.idx))
+		if err != nil {
+			return nil
+		}
+	} else {
+		gateProj = lw.gateProj
+		upProj = lw.upProj
+	}
+
+	gate := matMulQuant(x, gateProj, seqLen, H, I)
+	up := matMulQuant(x, upProj, seqLen, H, I)
+	for i := range gate {
+		gate[i] = silu(gate[i]) * up[i]
+	}
+
+	if !options.aiCache {
+		downProj, err = lw.parser.GetTensor(fmt.Sprintf("blk.%d.ffn_down.weight", lw.idx))
+		if err != nil {
+			return nil
+		}
+	} else {
+		downProj = lw.downProj
+	}
+
+	return matMulQuant(gate, downProj, seqLen, I, H)
+}
+
 func (m *qwen3Model) embed(tokenIDs []int) ([]float32, error) {
 	seqLen := len(tokenIDs)
 	H := cfgHiddenSize
@@ -207,6 +250,9 @@ func (m *qwen3Model) embed(tokenIDs []int) ([]float32, error) {
 		}
 	} else {
 		for i, id := range tokenIDs {
+			if id < 0 || (id+1)*H > len(m.embedTokens) {
+				return nil, fmt.Errorf("token ID %d out of bounds (vocab limit %d)", id, len(m.embedTokens)/H)
+			}
 			copy(hidden[i*H:], m.embedTokens[id*H:(id+1)*H])
 		}
 	}
@@ -301,43 +347,4 @@ func selfAttention(x []float32, lw *qwen3Layer, ropeCache []float32, seqLen int)
 	}
 
 	return matMulQuant(attnOut, oProj, seqLen, nH*hDim, H)
-}
-
-func swigluMLP(x []float32, lw *qwen3Layer, seqLen int) []float32 {
-	H := cfgHiddenSize
-	I := cfgIntermediateSize
-
-	var gateProj, upProj, downProj Tensor
-	var err error
-
-	if !options.aiCache {
-		gateProj, err = lw.parser.GetTensor(fmt.Sprintf("blk.%d.ffn_gate.weight", lw.idx))
-		if err != nil {
-			return nil
-		}
-		upProj, err = lw.parser.GetTensor(fmt.Sprintf("blk.%d.ffn_up.weight", lw.idx))
-		if err != nil {
-			return nil
-		}
-	} else {
-		gateProj = lw.gateProj
-		upProj = lw.upProj
-	}
-
-	gate := matMulQuant(x, gateProj, seqLen, H, I)
-	up := matMulQuant(x, upProj, seqLen, H, I)
-	for i := range gate {
-		gate[i] = silu(gate[i]) * up[i]
-	}
-
-	if !options.aiCache {
-		downProj, err = lw.parser.GetTensor(fmt.Sprintf("blk.%d.ffn_down.weight", lw.idx))
-		if err != nil {
-			return nil
-		}
-	} else {
-		downProj = lw.downProj
-	}
-
-	return matMulQuant(gate, downProj, seqLen, I, H)
 }

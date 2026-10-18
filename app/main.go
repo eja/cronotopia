@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.10.15"
+	Version = "8.10.18"
 )
 
 var (
@@ -135,6 +135,7 @@ func main() {
 		if err := runWikipediaImport(options.wikipediaImport); err != nil {
 			log.Fatalf("Wikipedia import error: %v", err)
 		}
+		log.Println("Wikipedia import completed successfully.")
 	}
 
 	if options.wikiliteImport != "" {
@@ -156,6 +157,8 @@ func main() {
 			if err := db.ProcessEmbeddings(); err != nil {
 				log.Fatalf("Embeddings processing error: %v", err)
 			}
+			log.Println("AI sync completed successfully.")
+			return
 		}
 
 		runAPIServer()

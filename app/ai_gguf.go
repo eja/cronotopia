@@ -46,6 +46,7 @@ type GGUFHeader struct {
 }
 
 type GGUFTensorInfo struct {
+	RowID      int64
 	Name       string
 	Dimensions []uint64
 	Type       uint32
@@ -261,7 +262,7 @@ func (p *GGUFParser) readValue(valType uint32) (any, error) {
 
 func f16ToF32(h uint16) float32 {
 	sign := uint32(h>>15) << 31
-	exp := uint32((h >> 10) & 0x1F)
+	exp := int32((h >> 10) & 0x1F)
 	mant := uint32(h & 0x3FF)
 	var bits uint32
 	switch {
@@ -274,11 +275,11 @@ func f16ToF32(h uint16) float32 {
 			exp--
 		}
 		mant &= 0x3FF
-		bits = sign | ((exp + 127 - 15) << 23) | (mant << 13)
+		bits = sign | uint32((exp+127-15)<<23) | (mant << 13)
 	case exp == 31:
 		bits = sign | 0x7F800000 | (mant << 13)
 	default:
-		bits = sign | ((exp + 127 - 15) << 23) | (mant << 13)
+		bits = sign | uint32((exp+127-15)<<23) | (mant << 13)
 	}
 	return math.Float32frombits(bits)
 }
@@ -337,7 +338,19 @@ func parseLayerIndex(tensorName string) int {
 }
 
 func (p *GGUFParser) getTensorBytes(name string) ([]byte, error) {
-	return db.AiGetTensorData(name)
+	tInfo, ok := p.Tensors[name]
+	if !ok {
+		return nil, fmt.Errorf("tensor %s not found", name)
+	}
+	sizeBytes, err := tensorSizeBytes(tInfo.Type, tInfo.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, sizeBytes)
+	if err := db.AiGetTensorBlob(tInfo.RowID, 0, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 func (p *GGUFParser) GetTensor(name string) (Tensor, error) {
@@ -489,40 +502,54 @@ func (p *GGUFParser) GetTokenEmbedding(id int, hDim int) ([]float32, error) {
 
 	out := make([]float32, hDim)
 
-	buf, err := db.AiGetTensorData("token_embd.weight")
-	if err != nil {
+	var start int64
+	var length int
+
+	switch tInfo.Type {
+	case 0:
+		start = int64(id) * dim0 * 4
+		length = int(dim0 * 4)
+	case 1, 30:
+		start = int64(id) * dim0 * 2
+		length = int(dim0 * 2)
+	case 8:
+		numBlocks := (dim0 + 31) / 32
+		start = int64(id) * numBlocks * 34
+		length = int(numBlocks * 34)
+	default:
+		return nil, fmt.Errorf("unsupported tensor type: %d", tInfo.Type)
+	}
+
+	buf := make([]byte, length)
+	if err := db.AiGetTensorBlob(tInfo.RowID, start, buf); err != nil {
 		return nil, err
 	}
 
 	if tInfo.Type == 1 {
-		start := int64(id) * dim0 * 2
 		for i := range out {
-			h := binary.LittleEndian.Uint16(buf[start+int64(i*2):])
+			h := binary.LittleEndian.Uint16(buf[i*2:])
 			out[i] = f16ToF32(h)
 		}
 		return out, nil
 	}
 	if tInfo.Type == 30 {
-		start := int64(id) * dim0 * 2
 		for i := range out {
-			u16 := binary.LittleEndian.Uint16(buf[start+int64(i*2):])
+			u16 := binary.LittleEndian.Uint16(buf[i*2:])
 			out[i] = math.Float32frombits(uint32(u16) << 16)
 		}
 		return out, nil
 	}
 	if tInfo.Type == 0 {
-		start := int64(id) * dim0 * 4
 		for i := range out {
-			bits := binary.LittleEndian.Uint32(buf[start+int64(i*4):])
+			bits := binary.LittleEndian.Uint32(buf[i*4:])
 			out[i] = math.Float32frombits(bits)
 		}
 		return out, nil
 	}
 	if tInfo.Type == 8 {
 		numBlocksPerToken := (dim0 + 31) / 32
-		start := int64(id) * numBlocksPerToken * 34
 		for j := int64(0); j < numBlocksPerToken; j++ {
-			blockOff := start + j*34
+			blockOff := j * 34
 			h := binary.LittleEndian.Uint16(buf[blockOff : blockOff+2])
 			d := f16ToF32(h)
 			for k := int64(0); k < 32; k++ {

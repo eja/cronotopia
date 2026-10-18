@@ -13,6 +13,7 @@ type bpeTokenizer struct {
 	mergeRank  map[[2]string]int
 	byteToChar [256]rune
 	eosID      int
+	specials   []string
 }
 
 func loadTokenizer(p *GGUFParser) (*bpeTokenizer, error) {
@@ -48,8 +49,19 @@ func loadTokenizer(p *GGUFParser) (*bpeTokenizer, error) {
 
 	eosID := 151643
 	if eosVal, ok := p.Metadata["tokenizer.ggml.eos_token_id"]; ok {
-		if id, ok := eosVal.(uint32); ok {
+		switch id := eosVal.(type) {
+		case uint32:
 			eosID = int(id)
+		case uint64:
+			eosID = int(id)
+		case int32:
+			eosID = int(id)
+		case int64:
+			eosID = int(id)
+		case float64:
+			eosID = int(id)
+		case int:
+			eosID = id
 		}
 	}
 
@@ -58,6 +70,14 @@ func loadTokenizer(p *GGUFParser) (*bpeTokenizer, error) {
 		mergeRank: mergeRank,
 		eosID:     eosID,
 	}
+
+	for tok := range vocab {
+		if t.isSpecialToken(tok) {
+			t.specials = append(t.specials, tok)
+		}
+	}
+	sort.Slice(t.specials, func(i, j int) bool { return len(t.specials[i]) > len(t.specials[j]) })
+
 	t.buildByteMap()
 
 	return t, nil
@@ -84,16 +104,8 @@ func (t *bpeTokenizer) isSpecialToken(s string) bool {
 }
 
 func (t *bpeTokenizer) splitOnSpecials(text string) []string {
-	var specials []string
-	for tok := range t.vocab {
-		if t.isSpecialToken(tok) {
-			specials = append(specials, tok)
-		}
-	}
-	sort.Slice(specials, func(i, j int) bool { return len(specials[i]) > len(specials[j]) })
-
 	result := []string{text}
-	for _, sp := range specials {
+	for _, sp := range t.specials {
 		var next []string
 		for _, seg := range result {
 			if t.isSpecialToken(seg) {

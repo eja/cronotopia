@@ -147,10 +147,9 @@ function getMapRadiusKm() {
     return Math.max(1, Math.round(haversineDistance(center.lat, center.lng, ne.lat, ne.lng)));
 }
 
-function resetMap() {
+function clearMarkers() {
     markers.forEach(m => m?.marker?.remove());
     markers = [];
-    if (map) map.flyTo({ center: initialMapCenter, zoom: initialMapZoom });
 }
 
 async function executeSearch() {
@@ -164,7 +163,7 @@ async function executeSearch() {
 
     if (!query && !year && !month && !day && !restrictMap) return;
 
-    resetMap();
+    clearMarkers();
 
     const countEl = document.getElementById('results-count');
     const metaEl = document.getElementById('results-meta');
@@ -235,7 +234,8 @@ function renderResults(items) {
             'E': { char: 'E', title: 'Event' },
             'T': { char: 'T', title: 'Title match' },
             'L': { char: 'L', title: 'Lexical content match' },
-            'V': { char: 'S', title: 'Semantic match' }
+            'S': { char: 'S', title: 'Semantic match' },
+            'H': { char: 'H', title: 'Hybrid match' }
         };
         const currentType = typeConfigs[itemType] || { char: itemType, title: 'Item' };
         const tBadge = `<span class="type-badge type-badge-${itemType}" title="${currentType.title}">${currentType.char}</span>`;

@@ -80,13 +80,14 @@ body, html {
 }
 
 .result-card.active {
-    border-left-color: #0d6efd;
     background-color: #f1f7ff;
 }
 
 .result-card.type-E { border-left-color: #198754; }
-.result-card.type-C { border-left-color: #0d6efd; }
-.result-card.type-V { border-left-color: #6f42c1; }
+.result-card.type-T { border-left-color: #c25e00; }
+.result-card.type-L { border-left-color: #0d6efd; }
+.result-card.type-S { border-left-color: #6f42c1; }
+.result-card.type-H { border-left-color: #087990; }
 
 .type-badge {
     width: 20px;
@@ -104,7 +105,7 @@ body, html {
 .type-badge-E { background-color: #198754; }
 .type-badge-T { background-color: #c25e00; }
 .type-badge-L { background-color: #0d6efd; }
-.type-badge-V { background-color: #6f42c1; }
+.type-badge-S { background-color: #6f42c1; }
 .type-badge-H { background-color: #087990; }
 
 .btn-panel-toggle {
@@ -206,9 +207,9 @@ body, html {
 }
 
 .pin-E { background-color: #198754; }
-.pin-L { background-color: #0d6efd; }
-.pin-V { background-color: #6f42c1; }
 .pin-T { background-color: #c25e00; }
+.pin-L { background-color: #0d6efd; }
+.pin-S { background-color: #6f42c1; }
 .pin-H { background-color: #087990; }
 
 .maplibregl-popup-content {

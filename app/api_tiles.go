@@ -42,10 +42,15 @@ func handleTiles(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	z, _ := strconv.Atoi(parts[2])
-	x, _ := strconv.Atoi(parts[3])
+	z, errZ := strconv.Atoi(parts[2])
+	x, errX := strconv.Atoi(parts[3])
 	yStr := strings.TrimSuffix(parts[4], ".pbf")
-	y, _ := strconv.Atoi(yStr)
+	y, errY := strconv.Atoi(yStr)
+
+	if errZ != nil || errX != nil || errY != nil || z < 0 || z > 30 {
+		http.NotFound(w, r)
+		return
+	}
 
 	data, err := db.GetTileData(z, x, y)
 	if err != nil || len(data) == 0 {
@@ -61,6 +66,10 @@ func handleTiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DBHandler) GetTileData(z, x, y int) ([]byte, error) {
+	if z < 0 || z > 30 {
+		return nil, fmt.Errorf("zoom level out of bounds: %d", z)
+	}
+
 	conn := h.pool.Get(context.Background())
 	if conn == nil {
 		return nil, fmt.Errorf("failed to get connection")

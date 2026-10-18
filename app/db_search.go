@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"unicode/utf8"
@@ -11,11 +12,17 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
+const MaxSearchCandidates = 2000
+
+var errDone = errors.New("search limit reached")
+
 type SearchParams struct {
 	QueryText        string
 	Day, Month, Year int
 	Lat, Lon         float64
 	RadiusKm         float64
+	HasSpace         bool
+	HasTime          bool
 	Range            int
 	Limit            int
 }

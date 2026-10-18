@@ -79,6 +79,9 @@ func gqa(q, k, v []float32, seqLen int) []float32 {
 }
 
 func matMul(a, b []float32, rows, in, out int) []float32 {
+	if rows == 0 || in == 0 || out == 0 {
+		return nil
+	}
 	res := make([]float32, rows*out)
 	numWorkers := min(runtime.NumCPU(), rows)
 	var wg sync.WaitGroup
@@ -120,6 +123,9 @@ func matMul(a, b []float32, rows, in, out int) []float32 {
 }
 
 func matMulQuant(a []float32, b Tensor, rows, in, out int) []float32 {
+	if rows == 0 || in == 0 || out == 0 {
+		return nil
+	}
 	if b.Type == 0 {
 		return matMul(a, b.F32, rows, in, out)
 	}
@@ -222,6 +228,9 @@ func rmsNormSlice(x, out, w []float32, n int) {
 }
 
 func rmsNormHeads(x, weight []float32, seqLen, nHeads, headDim int) {
+	if len(weight) == 0 {
+		return
+	}
 	for t := range seqLen {
 		for h := range nHeads {
 			base := t*nHeads*headDim + h*headDim

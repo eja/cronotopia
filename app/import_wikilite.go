@@ -50,7 +50,7 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 	}()
 
 	log.Println("Importing configuration...")
-	configKeys := []string{"annSize", "modelPrefixSearch", "modelPrefixSave"}
+	configKeys := []string{"model", "annSize", "modelPrefixSearch", "modelPrefixSave"}
 	for _, key := range configKeys {
 		_ = sqlitex.Execute(conn, `
 			INSERT OR REPLACE INTO main.settings (key, value)
@@ -60,13 +60,16 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 
 	log.Println("Importing entities...")
 	err = sqlitex.Execute(conn, `
-		INSERT OR REPLACE INTO main.entities (id, article_id, article_title)
+		INSERT INTO main.entities (id, article_id, title)
 		SELECT 
 			CAST(SUBSTR(entity, 2) AS INTEGER),
 			id,
 			title
 		FROM wikilite.articles
 		WHERE entity LIKE 'Q%'
+		ON CONFLICT(id) DO UPDATE SET
+			article_id = excluded.article_id,
+			title = excluded.title
 	`, nil)
 	if err != nil {
 		return fmt.Errorf("import entities error: %w", err)
@@ -112,7 +115,6 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 	tables := []string{
 		"vectors",
 		"vectors_ann_chunks",
-		"vectors_ann_index",
 		"vectors_ann_centroids",
 		"vectors_ann_centroid_chunks",
 	}
@@ -137,10 +139,32 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 		}
 	}
 
-	log.Println("Rebuilding full-text search index (FTS5)...")
+	var hasAnnIndex bool
+	_ = sqlitex.Execute(conn, "SELECT 1 FROM wikilite.sqlite_master WHERE type='table' AND name = 'vectors_ann_index'", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			hasAnnIndex = true
+			return nil
+		},
+	})
+
+	if hasAnnIndex {
+		err = sqlitex.Execute(conn, `
+			INSERT OR REPLACE INTO main.vectors_ann_index (chunk_id, chunk_position, vectors_id)
+			SELECT chunk_id, chunk_position, vectors_id FROM wikilite.vectors_ann_index
+		`, nil)
+		if err != nil {
+			return fmt.Errorf("import vectors_ann_index error: %w", err)
+		}
+	}
+
+	log.Println("Rebuilding full-text search indexes (FTS5)...")
 	err = sqlitex.Execute(conn, "INSERT INTO main.section_search(section_search) VALUES('rebuild')", nil)
 	if err != nil {
-		return fmt.Errorf("FTS5 rebuild error: %w", err)
+		return fmt.Errorf("FTS5 section_search rebuild error: %w", err)
+	}
+	err = sqlitex.Execute(conn, "INSERT INTO main.entity_label_search(entity_label_search) VALUES('rebuild')", nil)
+	if err != nil {
+		return fmt.Errorf("FTS5 entity_label_search rebuild error: %w", err)
 	}
 
 	endTx(&err)

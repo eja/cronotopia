@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"compress/bzip2"
 	"compress/gzip"
 	"context"
@@ -92,6 +93,7 @@ type CoordinateValue struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 	Precision float64 `json:"precision"`
+	Globe     string  `json:"globe"`
 }
 
 type EntityIdValue struct {
@@ -141,8 +143,8 @@ func (h *DBHandler) PostProcessWikidata() error {
 
 	log.Println("Pruning invalid coordinates and unlabelled entities...")
 	_ = sqlitex.Execute(conn, "DELETE FROM entity_places WHERE latitude < -90.0 OR latitude > 90.0 OR longitude < -180.0 OR longitude > 180.0", nil)
-	_ = sqlitex.Execute(conn, "DELETE FROM entity_places WHERE entity_id NOT IN (SELECT entity_id FROM entity_labels)", nil)
-	_ = sqlitex.Execute(conn, "DELETE FROM entity_times WHERE entity_id NOT IN (SELECT entity_id FROM entity_labels)", nil)
+	_ = sqlitex.Execute(conn, "DELETE FROM entity_places WHERE entity_id NOT IN (SELECT id FROM entities WHERE title IS NOT NULL AND title != '')", nil)
+	_ = sqlitex.Execute(conn, "DELETE FROM entity_times WHERE entity_id NOT IN (SELECT id FROM entities WHERE title IS NOT NULL AND title != '')", nil)
 
 	log.Println("Populating R*Tree spatial index...")
 	_ = sqlitex.Execute(conn, "DELETE FROM entity_places_rtree", nil)
@@ -155,7 +157,7 @@ func (h *DBHandler) PostProcessWikidata() error {
 		return fmt.Errorf("failed to populate rtree: %w", err)
 	}
 
-	log.Println("Building entity label full-text search index (FTS5)...")
+	log.Println("Building entity title full-text search index (FTS5)...")
 	err = sqlitex.Execute(conn, "INSERT INTO entity_label_search(entity_label_search) VALUES('rebuild')", nil)
 	if err != nil {
 		return fmt.Errorf("failed to rebuild entity_label_search: %w", err)
@@ -250,125 +252,128 @@ func openInput(src string) (io.ReadCloser, int64, *int64, error) {
 }
 
 func parseWikidataStream(r io.Reader, out chan<- ExtractedData, totalSize int64, bytesRead *int64) {
-	scanner := bufio.NewScanner(r)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 50*1024*1024)
-
+	reader := bufio.NewReaderSize(r, 1024*1024)
 	count := 0
 	start := time.Now()
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 || line[0] == '[' || line[0] == ']' {
-			continue
-		}
-		if line[len(line)-1] == ',' {
-			line = line[:len(line)-1]
-		}
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			line = bytes.TrimSpace(line)
+			if len(line) > 0 && line[0] != '[' && line[0] != ']' {
+				if line[len(line)-1] == ',' {
+					line = line[:len(line)-1]
+				}
 
-		var ent Entity
-		if err := json.Unmarshal(line, &ent); err != nil {
-			continue
-		}
+				var ent Entity
+				if json.Unmarshal(line, &ent) == nil {
+					if idVal, ok := parseID(ent.ID); ok {
+						data := ExtractedData{ID: idVal}
+						hasRelevant := false
 
-		idVal, ok := parseID(ent.ID)
-		if !ok {
-			continue
-		}
+						for prop, claims := range ent.Claims {
+							if len(claims) == 0 {
+								continue
+							}
+							pCode, ok := parseID(prop)
+							if !ok {
+								continue
+							}
 
-		data := ExtractedData{ID: idVal}
-		hasRelevant := false
+							isT := timeProps[pCode]
+							isP := placeProps[pCode]
+							isL := linkProps[pCode]
+							if !isT && !isP && !isL {
+								continue
+							}
 
-		for prop, claims := range ent.Claims {
-			if len(claims) == 0 {
-				continue
-			}
-			pCode, ok := parseID(prop)
-			if !ok {
-				continue
-			}
+							valRaw := claims[0].Mainsnak.Datavalue.Value
+							if len(valRaw) == 0 {
+								continue
+							}
 
-			isT := timeProps[pCode]
-			isP := placeProps[pCode]
-			isL := linkProps[pCode]
-			if !isT && !isP && !isL {
-				continue
-			}
+							if isT {
+								var tv TimeValue
+								if json.Unmarshal(valRaw, &tv) == nil && len(tv.Time) >= 11 {
+									tStr := tv.Time
+									if tStr[0] == '+' || tStr[0] == '-' {
+										y, _ := strconv.Atoi(tStr[1:5])
+										m, _ := strconv.Atoi(tStr[6:8])
+										d, _ := strconv.Atoi(tStr[9:11])
+										if tStr[0] == '-' {
+											y = -y
+										}
+										data.Times = append(data.Times, TimeRecord{Code: pCode, Y: y, M: m, D: d})
+										hasRelevant = true
+									}
+								}
+							}
 
-			valRaw := claims[0].Mainsnak.Datavalue.Value
-			if len(valRaw) == 0 {
-				continue
-			}
+							if isP {
+								var cv CoordinateValue
+								if json.Unmarshal(valRaw, &cv) == nil {
+									if cv.Globe == "" || cv.Globe == "http://www.wikidata.org/entity/Q2" {
+										data.Place = append(data.Place, PlaceRecord{pCode, cv.Latitude, cv.Longitude, cv.Precision})
+										hasRelevant = true
+									}
+								}
+							}
 
-			if isT {
-				var tv TimeValue
-				if json.Unmarshal(valRaw, &tv) == nil && len(tv.Time) >= 11 {
-					tStr := tv.Time
-					if tStr[0] == '+' || tStr[0] == '-' {
-						y, _ := strconv.Atoi(tStr[1:5])
-						m, _ := strconv.Atoi(tStr[6:8])
-						d, _ := strconv.Atoi(tStr[9:11])
-						if tStr[0] == '-' {
-							y = -y
+							if isL {
+								var ev EntityIdValue
+								if json.Unmarshal(valRaw, &ev) == nil {
+									if lVal, ok := parseID(ev.ID); ok {
+										data.Links = append(data.Links, LinkRecord{pCode, lVal})
+										hasRelevant = true
+									}
+								}
+							}
 						}
-						data.Times = append(data.Times, TimeRecord{Code: pCode, Y: y, M: m, D: d})
-						hasRelevant = true
-					}
-				}
-			}
 
-			if isP {
-				var cv CoordinateValue
-				if json.Unmarshal(valRaw, &cv) == nil {
-					data.Place = append(data.Place, PlaceRecord{pCode, cv.Latitude, cv.Longitude, cv.Precision})
-					hasRelevant = true
-				}
-			}
+						if hasRelevant {
+							var label, desc string
+							if l, ok := ent.Labels["en"]; ok && strings.TrimSpace(l.Value) != "" {
+								label = l.Value
+								if d, ok := ent.Descriptions["en"]; ok {
+									desc = d.Value
+								}
+							} else {
+								for lang, l := range ent.Labels {
+									if val := strings.TrimSpace(l.Value); val != "" {
+										label = val
+										if d, ok := ent.Descriptions[lang]; ok {
+											desc = d.Value
+										}
+										break
+									}
+								}
+							}
 
-			if isL {
-				var ev EntityIdValue
-				if json.Unmarshal(valRaw, &ev) == nil {
-					if lVal, ok := parseID(ev.ID); ok {
-						data.Links = append(data.Links, LinkRecord{pCode, lVal})
-						hasRelevant = true
-					}
-				}
-			}
-		}
-
-		if hasRelevant {
-			var label, desc string
-			if l, ok := ent.Labels["en"]; ok && strings.TrimSpace(l.Value) != "" {
-				label = l.Value
-				if d, ok := ent.Descriptions["en"]; ok {
-					desc = d.Value
-				}
-			} else {
-				for lang, l := range ent.Labels {
-					if val := strings.TrimSpace(l.Value); val != "" {
-						label = val
-						if d, ok := ent.Descriptions[lang]; ok {
-							desc = d.Value
+							if label != "" {
+								data.Query = append(data.Query, QueryRecord{label, desc})
+								out <- data
+							}
 						}
-						break
 					}
 				}
-			}
 
-			if label != "" {
-				data.Query = append(data.Query, QueryRecord{label, desc})
-				out <- data
+				count++
+				if count%50000 == 0 {
+					elapsed := time.Since(start)
+					pct := 0.0
+					if totalSize > 0 && *bytesRead > 0 {
+						pct = float64(*bytesRead) / float64(totalSize) * 100
+					}
+					log.Printf("Progress: %.2f%% | %d entities | %.0f items/sec", pct, count, float64(count)/elapsed.Seconds())
+				}
 			}
 		}
 
-		count++
-		if count%50000 == 0 {
-			elapsed := time.Since(start)
-			pct := 0.0
-			if totalSize > 0 && *bytesRead > 0 {
-				pct = float64(*bytesRead) / float64(totalSize) * 100
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Wikidata stream reader error: %v", err)
 			}
-			log.Printf("Progress: %.2f%% | %d entities | %.0f items/sec", pct, count, float64(count)/elapsed.Seconds())
+			break
 		}
 	}
 }
@@ -404,7 +409,15 @@ func wikidataDBWorker(in <-chan ExtractedData) {
 			})
 		}
 		for _, q := range item.Query {
-			_ = sqlitex.Execute(conn, `INSERT OR REPLACE INTO entity_labels (entity_id, label, description) VALUES (?,?,?)`, &sqlitex.ExecOptions{
+			_ = sqlitex.Execute(conn, `
+				INSERT INTO entities (id, title, description) VALUES (?, ?, ?)
+				ON CONFLICT(id) DO UPDATE SET 
+					title = CASE 
+						WHEN entities.title IS NOT NULL AND entities.title != '' THEN entities.title 
+						ELSE excluded.title 
+					END,
+					description = excluded.description
+			`, &sqlitex.ExecOptions{
 				Args: []any{item.ID, q.Label, q.Data},
 			})
 		}

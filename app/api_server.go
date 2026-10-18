@@ -87,9 +87,15 @@ func runAPIServer() {
 		yr, _ := strconv.Atoi(q.Get("year"))
 		m, _ := strconv.Atoi(q.Get("month"))
 		d, _ := strconv.Atoi(q.Get("day"))
+		if m < 1 || m > 12 {
+			m = 0
+		}
+		if d < 1 || d > 31 {
+			d = 0
+		}
 		rng := parseRange(q.Get("range"))
 
-		hasSpace := lat != 0 || lon != 0
+		hasSpace := q.Has("latitude") && q.Has("longitude")
 		hasTime := yr != 0 || m != 0 || d != 0
 		hasText := query != ""
 
@@ -108,6 +114,8 @@ func runAPIServer() {
 			Lat:       lat,
 			Lon:       lon,
 			RadiusKm:  rad,
+			HasSpace:  hasSpace,
+			HasTime:   hasTime,
 			Year:      yr,
 			Month:     m,
 			Day:       d,
@@ -150,6 +158,10 @@ func runAPIServer() {
 		var err error
 
 		if mode == "semantic" {
+			if !ai {
+				http.Error(w, "Semantic search unavailable: AI model is not loaded", http.StatusBadRequest)
+				return
+			}
 			results, err = db.SearchVectors(query, limit, params)
 		} else if mode == "lexical" {
 			results, err = db.SearchLexical(query, limit, params)

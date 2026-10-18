@@ -4,8 +4,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -28,71 +28,24 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 		p = searchParams[0]
 	}
 
-	hasSpace := p.Lat != 0 || p.Lon != 0
-	hasTime := p.Year != 0 || p.Month != 0 || p.Day != 0
+	hasSpace := p.HasSpace || (p.Lat != 0 || p.Lon != 0)
+	hasTime := p.HasTime || (p.Year != 0 || p.Month != 0 || p.Day != 0)
 	if p.RadiusKm <= 0 {
 		p.RadiusKm = 100.0
 	}
 
-	var whereSub []string
-	var args []any
-	args = append(args, sanitized)
-
-	if hasSpace {
-		minLat, maxLat, minLon, maxLon := BoundingBox(p.Lat, p.Lon, p.RadiusKm)
-		whereSub = append(whereSub, `s.entity_id IN (
-			SELECT p.entity_id FROM entity_places_rtree r
-			JOIN entity_places p ON r.id = p.id
-			WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?
-		)`)
-		args = append(args, minLat, maxLat, minLon, maxLon)
+	fetchLimit := limit * 6
+	if fetchLimit < 60 {
+		fetchLimit = 60
+	}
+	if hasSpace || hasTime {
+		fetchLimit = MaxSearchCandidates
 	}
 
-	if hasTime {
-		if p.Year != 0 {
-			minJD, maxJD := getJulianDayBounds(p.Year, p.Month, p.Day)
-			if p.Range == 0 {
-				if minJD == maxJD {
-					whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.julian_day = ?)`)
-					args = append(args, minJD)
-				} else {
-					whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.julian_day >= ? AND tm.julian_day <= ?)`)
-					args = append(args, minJD, maxJD)
-				}
-			} else if p.Range < 0 {
-				whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.julian_day <= ?)`)
-				args = append(args, minJD)
-			} else if p.Range > 0 {
-				whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.julian_day >= ?)`)
-				args = append(args, maxJD)
-			}
-		} else if p.Month > 0 && p.Day > 0 {
-			whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.month = ? AND tm.day = ?)`)
-			args = append(args, p.Month, p.Day)
-		} else if p.Month > 0 {
-			whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.month = ?)`)
-			args = append(args, p.Month)
-		} else if p.Day > 0 {
-			whereSub = append(whereSub, `s.entity_id IN (SELECT tm.entity_id FROM entity_times tm WHERE tm.day = ?)`)
-			args = append(args, p.Day)
-		}
-	}
-
-	extraWhere := ""
-	if len(whereSub) > 0 {
-		extraWhere = " AND " + strings.Join(whereSub, " AND ")
-	}
-
-	fetchLimit := limit * 4
-	if fetchLimit < 40 {
-		fetchLimit = 40
-	}
-	args = append(args, fetchLimit)
-
-	sqlQuery := fmt.Sprintf(`
+	sqlQuery := `
 		SELECT
 			s.entity_id,
-			COALESCE(e.article_title, s.title),
+			COALESCE(e.title, s.title),
 			COALESCE(e.article_id, 0),
 			s.content,
 			snippet(section_search, 1, '<mark>', '</mark>', '...', 32) as snippet,
@@ -100,17 +53,21 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 		FROM section_search
 		JOIN sections s ON section_search.rowid = s.id
 		LEFT JOIN entities e ON s.entity_id = e.id
-		WHERE section_search MATCH ? %s
+		WHERE section_search MATCH ?
 		ORDER BY power ASC
 		LIMIT ?
-	`, extraWhere)
+	`
 
 	var results []SearchResult
 	seenEntity := make(map[int]bool)
 
 	err := sqlitex.Execute(conn, sqlQuery, &sqlitex.ExecOptions{
-		Args: args,
+		Args: []any{sanitized, fetchLimit},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
+			if len(results) >= limit {
+				return errDone
+			}
+
 			entID := int(stmt.ColumnInt64(0))
 			if seenEntity[entID] {
 				return nil
@@ -155,12 +112,16 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 				res.Snippet = Snippet(res.Text, 160)
 			}
 			results = append(results, res)
+
+			if len(results) >= limit {
+				return errDone
+			}
 			return nil
 		},
 	})
 
-	if len(results) > limit {
-		results = results[:limit]
+	if err != nil && !errors.Is(err, errDone) {
+		return nil, err
 	}
-	return results, err
+	return results, nil
 }

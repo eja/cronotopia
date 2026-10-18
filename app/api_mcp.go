@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const mcpMaxBody = 4 * 1024 * 1024
@@ -28,12 +29,21 @@ type jsonRPCResponse struct {
 	Error   any    `json:"error,omitempty"`
 }
 
+type mcpSession struct {
+	msgCh chan []byte
+}
+
+var (
+	mcpSessions   = make(map[string]*mcpSession)
+	mcpSessionsMu sync.Mutex
+)
+
 func handleMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 
-	if r.Method == "OPTIONS" {
+	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -43,39 +53,92 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 		sessionID = r.URL.Query().Get("session_id")
 	}
 
-	if r.Method == "POST" {
+	if r.Method == http.MethodPost {
 		r.Body = http.MaxBytesReader(w, r.Body, mcpMaxBody)
 
 		var req jsonRPCRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad JSON-RPC or payload too large", 400)
+			http.Error(w, "Bad JSON-RPC or payload too large", http.StatusBadRequest)
 			return
 		}
 
-		if req.Method == "initialize" {
-			b := make([]byte, 8)
-			rand.Read(b)
-			sessionID = hex.EncodeToString(b)
-			w.Header().Set("Mcp-Session-Id", sessionID)
+		if strings.HasPrefix(req.Method, "notifications/") {
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 
 		resp := processMCPCall(req)
+		respBytes, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		mcpSessionsMu.Lock()
+		sess, ok := mcpSessions[sessionID]
+		mcpSessionsMu.Unlock()
+
+		if ok && sess != nil {
+			select {
+			case sess.msgCh <- respBytes:
+				w.WriteHeader(http.StatusAccepted)
+			case <-r.Context().Done():
+				http.Error(w, "Client disconnected", http.StatusRequestTimeout)
+			default:
+				http.Error(w, "Session message queue full", http.StatusServiceUnavailable)
+			}
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		_, _ = w.Write(respBytes)
 		return
 	}
 
-	if r.Method == "GET" {
+	if r.Method == http.MethodGet {
+		if sessionID == "" {
+			b := make([]byte, 8)
+			_, _ = rand.Read(b)
+			sessionID = hex.EncodeToString(b)
+		}
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		sess := &mcpSession{
+			msgCh: make(chan []byte, 64),
+		}
+
+		mcpSessionsMu.Lock()
+		mcpSessions[sessionID] = sess
+		mcpSessionsMu.Unlock()
+
+		defer func() {
+			mcpSessionsMu.Lock()
+			delete(mcpSessions, sessionID)
+			mcpSessionsMu.Unlock()
+		}()
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		fmt.Fprintf(w, ":connected\n\n")
 
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
+		_, _ = fmt.Fprintf(w, "event: endpoint\ndata: /mcp?session_id=%s\n\n", sessionID)
+		flusher.Flush()
+
+		ctx := r.Context()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-sess.msgCh:
+				_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(msg))
+				flusher.Flush()
+			}
 		}
-
-		<-r.Context().Done()
 	}
 }
 
@@ -89,6 +152,8 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "cronotopia", "version": "9.0.0"},
 		}
+	case "notifications/initialized":
+		return jsonRPCResponse{}
 	case "tools/list":
 		resp.Result = map[string]any{
 			"tools": []map[string]any{
@@ -166,8 +231,18 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 		yr, _ := args["year"].(float64)
 		limit, _ := args["limit"].(float64)
 
+		_, hasLat := args["latitude"]
+		_, hasLon := args["longitude"]
+		_, hasYear := args["year"]
+
 		events, err := db.SearchEvents(SearchParams{
-			Lat: lat, Lon: lon, RadiusKm: rad, Year: int(yr), Limit: int(limit),
+			Lat:      lat,
+			Lon:      lon,
+			RadiusKm: rad,
+			Year:     int(yr),
+			HasSpace: hasLat && hasLon,
+			HasTime:  hasYear,
+			Limit:    int(limit),
 		})
 		if err != nil {
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
@@ -194,9 +269,13 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 		var err error
 
 		if mode == "semantic" {
-			if ai {
-				results, err = db.SearchVectors(q, limit)
+			if !ai {
+				return map[string]any{
+					"isError": true,
+					"content": []map[string]any{{"type": "text", "text": "Semantic search unavailable: AI model is not loaded"}},
+				}
 			}
+			results, err = db.SearchVectors(q, limit)
 		} else if mode == "lexical" {
 			results, err = db.SearchLexical(q, limit)
 		} else if mode == "entity" {

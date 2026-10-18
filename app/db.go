@@ -262,15 +262,10 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			`CREATE TABLE IF NOT EXISTS entities (
 				id INTEGER PRIMARY KEY,
 				article_id INTEGER,
-				article_title TEXT
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_entities_art ON entities(article_id);`,
-
-			`CREATE TABLE IF NOT EXISTS entity_labels (
-				entity_id INTEGER PRIMARY KEY,
-				label TEXT,
+				title TEXT,
 				description TEXT
 			);`,
+			`CREATE INDEX IF NOT EXISTS idx_entities_art ON entities(article_id);`,
 
 			`CREATE TABLE IF NOT EXISTS entity_times (
 				entity_id INTEGER NOT NULL,
@@ -316,9 +311,9 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			);`,
 
 			`CREATE VIRTUAL TABLE IF NOT EXISTS entity_label_search USING fts5(
-				label,
-				content='entity_labels',
-				content_rowid='entity_id',
+				title,
+				content='entities',
+				content_rowid='id',
 				tokenize='unicode61 remove_diacritics 2'
 			);`,
 
@@ -332,12 +327,11 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				chunk BLOB
 			);`,
 			`CREATE TABLE IF NOT EXISTS vectors_ann_index (
-				id INTEGER PRIMARY KEY,
 				vectors_id INTEGER NOT NULL,
 				chunk_id INTEGER NOT NULL,
-				chunk_position INTEGER NOT NULL
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_ann_chunk ON vectors_ann_index(chunk_id, chunk_position, vectors_id);`,
+				chunk_position INTEGER NOT NULL,
+        PRIMARY KEY (chunk_id, chunk_position)
+			) WITHOUT ROWID;`,
 
 			`CREATE TABLE IF NOT EXISTS vectors_ann_centroids (
 				id INTEGER PRIMARY KEY,
@@ -354,9 +348,8 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				name TEXT NOT NULL,
 				dtype INTEGER NOT NULL,
 				dims TEXT NOT NULL,
-				data BLOB NOT NULL,
-				PRIMARY KEY(layer, name)
-			) WITHOUT ROWID;`,
+				data BLOB NOT NULL
+			);`,
 
 			`CREATE TABLE IF NOT EXISTS tiles (
 				zoom_level INTEGER,
@@ -390,8 +383,10 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		if placesCount > 0 && rtreeCount < placesCount {
 			log.Printf("Syncing spatial R*Tree index (%d / %d records)...", rtreeCount, placesCount)
 			_ = sqlitex.Execute(initConn, `
-				INSERT OR IGNORE INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
-				SELECT id, latitude, latitude, longitude, longitude FROM entity_places
+				INSERT INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
+				SELECT id, latitude, latitude, longitude, longitude 
+				FROM entity_places 
+				WHERE id NOT IN (SELECT id FROM entity_places_rtree)
 			`, nil)
 		}
 

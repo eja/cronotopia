@@ -33,7 +33,7 @@ func (h *DBHandler) AiHasANN() bool {
 	defer h.pool.Put(conn)
 
 	var found bool
-	_ = sqlitex.Execute(conn, "SELECT id FROM vectors_ann_index LIMIT 1", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, "SELECT 1 FROM vectors_ann_index LIMIT 1", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			found = true
 			return nil
@@ -89,7 +89,7 @@ func (h *DBHandler) ProcessEmbeddings() error {
 		var items []secItem
 
 		query := fmt.Sprintf(`
-			SELECT s.id, COALESCE(e.article_title, s.title), s.content 
+			SELECT s.id, COALESCE(e.title, s.title), s.content 
 			FROM sections s
 			LEFT JOIN entities e ON s.entity_id = e.id
 			WHERE s.id IN (%s)
@@ -106,14 +106,18 @@ func (h *DBHandler) ProcessEmbeddings() error {
 			},
 		})
 
-		for _, item := range items {
-			emb, err := aiEmbeddings(options.aiModelPrefixSave + item.text)
-			if err != nil {
-				continue
+		endTx, txErr := sqlitex.ImmediateTransaction(conn)
+		if txErr == nil {
+			for _, item := range items {
+				emb, err := aiEmbeddings(options.aiModelPrefixSave + item.text)
+				if err != nil {
+					continue
+				}
+				_ = sqlitex.Execute(conn, "INSERT OR REPLACE INTO vectors (id, embedding) VALUES (?, ?)", &sqlitex.ExecOptions{
+					Args: []any{item.id, Float32ToBytes(emb)},
+				})
 			}
-			_ = sqlitex.Execute(conn, "INSERT OR REPLACE INTO vectors (id, embedding) VALUES (?, ?)", &sqlitex.ExecOptions{
-				Args: []any{item.id, Float32ToBytes(emb)},
-			})
+			endTx(&txErr)
 		}
 		log.Printf("Embedding progress: %d/%d (%.1f%%)", end, total, float64(end)/float64(total)*100.0)
 	}
@@ -152,6 +156,9 @@ func (h *DBHandler) ProcessANN() error {
 			b := make([]byte, stmt.ColumnLen(1))
 			stmt.ColumnBytes(1, b)
 			full := BytesToFloat32(b)
+			if len(full) < size {
+				return nil
+			}
 			cut := make([]float32, size)
 			copy(cut, full[:size])
 			l2Norm(cut)
@@ -228,6 +235,12 @@ func (h *DBHandler) ProcessANN() error {
 		}
 	}
 
+	endTx, err := sqlitex.ImmediateTransaction(conn)
+	if err != nil {
+		return err
+	}
+	defer endTx(&err)
+
 	for cIdx, c := range centroids {
 		_ = sqlitex.Execute(conn, "INSERT INTO vectors_ann_centroids (id, centroid) VALUES (?, ?)", &sqlitex.ExecOptions{
 			Args: []any{cIdx + 1, Float32ToBytes(c)},
@@ -249,8 +262,8 @@ func (h *DBHandler) ProcessANN() error {
 			var chunkBlob []byte
 			for pos, it := range sub {
 				chunkBlob = append(chunkBlob, Float32ToBytes(it.emb)...)
-				_ = sqlitex.Execute(conn, "INSERT INTO vectors_ann_index (vectors_id, chunk_id, chunk_position) VALUES (?, ?, ?)", &sqlitex.ExecOptions{
-					Args: []any{it.id, chunkID, pos},
+				_ = sqlitex.Execute(conn, "INSERT INTO vectors_ann_index (chunk_id, chunk_position, vectors_id) VALUES (?, ?, ?)", &sqlitex.ExecOptions{
+					Args: []any{chunkID, pos, it.id},
 				})
 			}
 
@@ -274,6 +287,14 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 	}
 	defer h.pool.Put(conn)
 
+	if size <= 0 || size > len(vectors) {
+		size = len(vectors)
+	}
+
+	mrlQuery := make([]float32, size)
+	copy(mrlQuery, vectors[:size])
+	l2Norm(mrlQuery)
+
 	type centroidDist struct {
 		id   int
 		dist float32
@@ -287,13 +308,9 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 			stmt.ColumnBytes(1, cBytes)
 			cFloats := BytesToFloat32(cBytes)
 
-			if size <= 0 || size > len(cFloats) {
-				size = len(cFloats)
+			if len(cFloats) < size {
+				return nil
 			}
-
-			mrlQuery := make([]float32, size)
-			copy(mrlQuery, vectors[:size])
-			l2Norm(mrlQuery)
 
 			cDists = append(cDists, centroidDist{
 				id:   int(stmt.ColumnInt64(0)),
@@ -327,10 +344,6 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 	}
 
 	chunkSize := size * 4
-	mrlQuery := make([]float32, size)
-	copy(mrlQuery, vectors[:size])
-	l2Norm(mrlQuery)
-
 	queryStr := "SELECT id, chunk FROM vectors_ann_chunks WHERE id IN (" + strings.Join(selectedChunks, ",") + ")"
 	var annResults []VectorDistance
 

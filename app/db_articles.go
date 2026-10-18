@@ -37,7 +37,7 @@ func (h *DBHandler) ArticleGetByEntity(entityID int) (ArticleResult, error) {
 
 	targetTitle := ""
 	_ = sqlitex.Execute(conn, `
-		SELECT COALESCE(e.article_title, s.title, '')
+		SELECT COALESCE(NULLIF(e.title, ''), NULLIF(s.title, ''), 'Untitled')
 		FROM sections s
 		LEFT JOIN entities e ON s.entity_id = e.id
 		WHERE s.entity_id = ?
@@ -50,15 +50,7 @@ func (h *DBHandler) ArticleGetByEntity(entityID int) (ArticleResult, error) {
 		},
 	})
 
-	if targetTitle == "" {
-		return ArticleResult{}, fmt.Errorf("article not found")
-	}
-
 	var res ArticleResult
-	res.ID = entityID
-	res.EntityID = entityID
-	res.Title = targetTitle
-
 	err := sqlitex.Execute(conn, `
 		SELECT id, title, content
 		FROM sections
@@ -81,6 +73,14 @@ func (h *DBHandler) ArticleGetByEntity(entityID int) (ArticleResult, error) {
 	if len(res.Sections) == 0 {
 		return res, fmt.Errorf("article not found")
 	}
+
+	if targetTitle == "" {
+		targetTitle = "Untitled"
+	}
+
+	res.ID = entityID
+	res.EntityID = entityID
+	res.Title = targetTitle
 
 	info := h.GetEntityInfo(conn, res.EntityID, 0, 0)
 	res.Latitude = info.Lat

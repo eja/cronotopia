@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -49,36 +50,36 @@ func (h *DBHandler) AiClearModel() error {
 
 func (h *DBHandler) AiSaveTensor(conn *sqlite.Conn, t ModelTensor) error {
 	return sqlitex.Execute(conn,
-		"INSERT OR REPLACE INTO tensors (layer, name, dtype, dims, data) VALUES (?, ?, ?, ?, ?)",
+		"INSERT INTO tensors (layer, name, dtype, dims, data) VALUES (?, ?, ?, ?, ?)",
 		&sqlitex.ExecOptions{
 			Args: []any{t.Layer, t.Name, t.DType, t.Dims, t.Data},
 		},
 	)
 }
 
-func (h *DBHandler) AiGetTensorData(name string) ([]byte, error) {
+func (h *DBHandler) AiGetTensorBlob(rowID int64, offset int64, dest []byte) error {
 	conn := h.pool.Get(context.Background())
 	if conn == nil {
-		return nil, fmt.Errorf("failed to get connection")
+		return fmt.Errorf("failed to get connection")
 	}
 	defer h.pool.Put(conn)
 
-	var data []byte
-	err := sqlitex.Execute(conn, "SELECT data FROM tensors WHERE name = ? LIMIT 1", &sqlitex.ExecOptions{
-		Args: []any{name},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			data = make([]byte, stmt.ColumnLen(0))
-			stmt.ColumnBytes(0, data)
-			return nil
-		},
-	})
+	blob, err := conn.OpenBlob("", "tensors", "data", rowID, false)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to open tensor blob (row %d): %w", rowID, err)
 	}
-	if data == nil {
-		return nil, fmt.Errorf("tensor %s not found in database", name)
+	defer blob.Close()
+
+	if offset > 0 {
+		if _, err := blob.Seek(offset, io.SeekStart); err != nil {
+			return fmt.Errorf("failed to seek tensor blob (row %d, offset %d): %w", rowID, offset, err)
+		}
 	}
-	return data, nil
+
+	if _, err := io.ReadFull(blob, dest); err != nil {
+		return fmt.Errorf("failed to read tensor blob (row %d, len %d): %w", rowID, len(dest), err)
+	}
+	return nil
 }
 
 func (h *DBHandler) AiLoadTensorInfos() (map[string]GGUFTensorInfo, error) {
@@ -89,11 +90,12 @@ func (h *DBHandler) AiLoadTensorInfos() (map[string]GGUFTensorInfo, error) {
 	defer h.pool.Put(conn)
 
 	tensors := make(map[string]GGUFTensorInfo)
-	err := sqlitex.Execute(conn, "SELECT name, dtype, dims FROM tensors", &sqlitex.ExecOptions{
+	err := sqlitex.Execute(conn, "SELECT rowid, name, dtype, dims FROM tensors", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			name := stmt.ColumnText(0)
-			dtype := uint32(stmt.ColumnInt(1))
-			dimsStr := stmt.ColumnText(2)
+			rowID := stmt.ColumnInt64(0)
+			name := stmt.ColumnText(1)
+			dtype := uint32(stmt.ColumnInt(2))
+			dimsStr := stmt.ColumnText(3)
 
 			parts := strings.Split(dimsStr, ",")
 			dims := make([]uint64, len(parts))
@@ -103,6 +105,7 @@ func (h *DBHandler) AiLoadTensorInfos() (map[string]GGUFTensorInfo, error) {
 			}
 
 			tensors[name] = GGUFTensorInfo{
+				RowID:      rowID,
 				Name:       name,
 				Type:       dtype,
 				Dimensions: dims,

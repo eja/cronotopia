@@ -107,7 +107,8 @@ func runWikipediaImport(src string) error {
 	log.Println("Populating section full text search index (FTS5)...")
 	conn := db.pool.Get(context.Background())
 	if conn != nil {
-		_ = sqlitex.Execute(conn, "INSERT INTO section_search(rowid, title, content) SELECT id, title, content FROM sections", nil)
+		_ = sqlitex.Execute(conn, "INSERT INTO section_search(section_search) VALUES('rebuild')", nil)
+		_ = sqlitex.Execute(conn, "INSERT INTO entity_label_search(entity_label_search) VALUES('rebuild')", nil)
 		db.pool.Put(conn)
 	}
 
@@ -138,9 +139,17 @@ func processWikipediaJSONL(r io.Reader) error {
 			continue
 		}
 
-		qID, _ := strconv.Atoi(strings.TrimPrefix(art.MainEntity.Identifier, "Q"))
+		qID, err := strconv.Atoi(strings.TrimPrefix(art.MainEntity.Identifier, "Q"))
+		if err != nil || qID <= 0 {
+			continue
+		}
 
-		_ = sqlitex.Execute(conn, `INSERT OR REPLACE INTO entities (id, article_id, article_title) VALUES (?, ?, ?)`, &sqlitex.ExecOptions{
+		_ = sqlitex.Execute(conn, `
+			INSERT INTO entities (id, article_id, title) VALUES (?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET 
+				article_id = excluded.article_id,
+				title = excluded.title
+		`, &sqlitex.ExecOptions{
 			Args: []any{qID, art.Identifier, art.Name},
 		})
 

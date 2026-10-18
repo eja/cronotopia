@@ -20,8 +20,8 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 	}
 	defer h.pool.Put(conn)
 
-	hasSpace := p.Lat != 0 || p.Lon != 0
-	hasTime := p.Year != 0 || p.Month != 0 || p.Day != 0
+	hasSpace := p.HasSpace || (p.Lat != 0 || p.Lon != 0)
+	hasTime := p.HasTime || (p.Year != 0 || p.Month != 0 || p.Day != 0)
 
 	if !hasSpace && !hasTime {
 		return []EventResult{}, nil
@@ -44,13 +44,12 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 			SELECT 
 				p.entity_id, p.prop_code, 
 				p.latitude, p.longitude, 
-				COALESCE(l.label, e.article_title, 'Q' || p.entity_id) as label,
-				COALESCE(l.description, '') as description,
+				COALESCE(e.title, 'T' || p.entity_id) as label,
+				COALESCE(e.description, '') as description,
 				COALESCE(e.article_id, 0)
 			FROM entity_places_rtree r
 			JOIN entity_places p ON r.id = p.id
 			LEFT JOIN entities e ON p.entity_id = e.id
-			LEFT JOIN entity_labels l ON p.entity_id = l.entity_id
 			WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?
 			LIMIT ?
 		`
@@ -137,12 +136,11 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 			SELECT 
 				t.entity_id, t.prop_code, 
 				t.day, t.month, t.year, t.julian_day,
-				COALESCE(l.label, e.article_title, 'Q' || t.entity_id) as label,
-				COALESCE(l.description, '') as description,
+				COALESCE(e.title, 'T' || t.entity_id) as label,
+				COALESCE(e.description, '') as description,
 				COALESCE(e.article_id, 0)
 			FROM entity_times t
 			LEFT JOIN entities e ON t.entity_id = e.id
-			LEFT JOIN entity_labels l ON t.entity_id = l.entity_id
 			WHERE %s
 			ORDER BY %s
 			LIMIT ?
@@ -258,14 +256,13 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 				t.entity_id, t.prop_code, 
 				p.latitude, p.longitude, 
 				t.day, t.month, t.year, t.julian_day,
-				COALESCE(l.label, e.article_title, 'Q' || t.entity_id) as label,
-				COALESCE(l.description, '') as description,
+				COALESCE(e.title, 'T' || t.entity_id) as label,
+				COALESCE(e.description, '') as description,
 				COALESCE(e.article_id, 0)
 			FROM entity_places_rtree r
 			JOIN entity_places p ON r.id = p.id
 			JOIN entity_times t ON p.entity_id = t.entity_id
 			LEFT JOIN entities e ON t.entity_id = e.id
-			LEFT JOIN entity_labels l ON t.entity_id = l.entity_id
 			WHERE %s
 			ORDER BY %s
 			LIMIT ?
