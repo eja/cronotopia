@@ -27,8 +27,8 @@ The system includes a pure Go execution engine for quantized GGUF embedding mode
     *   Hybrid retrieval combining BM25 full-text scoring, vector cosine distance, and spatio-temporal filters via Reciprocal Rank Fusion (RRF).
     *   Optional support for external embedding APIs.
 *   **Spatio-Temporal Queries:** Fast spatial bounding-box checks using SQLite R*Tree, Haversine distance calculations, and Julian day calendar conversions for historical dates (exact date, before, after).
-*   **Tile Server & Web UI:** Serves vector tiles (PBF/MVT) directly to an embedded MapLibre GL frontend.
-*   **MCP Server:** Native `/mcp` endpoint exposing tools over JSON-RPC 2.0 (POST) and Server-Sent Events (GET).
+*   **Vector Tile Server & Spatial Feature Extraction:** Serves vector tiles (PBF/MVT) directly to an embedded MapLibre GL frontend, and extracts spatial centroids, bounding boxes, or complete geometries directly from stored tiles on demand.
+*   **MCP Server:** Native `/mcp` endpoint exposing historical, semantic, and vector map tools over JSON-RPC 2.0 (POST) and Server-Sent Events (GET).
 
 ## Installation
 
@@ -213,13 +213,43 @@ Retrieves Wikipedia sections, coordinates, and dates for an entity or article.
 
 ```bash
 curl "http://localhost:35248/api/article?id=8467"
-curl "http://localhost:35248/api?entity_id=8467"
+curl "http://localhost:35248/api/entity_id=8467"
 ```
 
-### Map Metadata and Tiles
+### Map Metadata, Tiles, and Vector Feature Extraction
 
-*   `GET /api/map` (or `GET /api?map=1`): Returns center coordinates and zoom range from database settings.
-*   `GET /tiles/{z}/{x}/{y}.pbf`: Serves vector tiles directly from SQLite.
+#### Map Metadata: `GET /api/map`
+Returns center coordinates, default zoom, and available zoom limits (`min_zoom`, `max_zoom`) from the database settings.
+```bash
+curl "http://localhost:35248/api/map"
+```
+
+#### Map Tile PBF: `GET /tiles/{z}/{x}/{y}.pbf`
+Serves vector tiles (PBF/MVT) directly from the internal SQLite schema.
+```bash
+curl "http://localhost:35248/tiles/14/8711/5684.pbf"
+```
+
+#### Extract Map Centroids: `GET /api/map?latitude={lat}&longitude={lon}`
+Extracts vector features from intersecting vector tiles within a radius, returning centroids, bounding boxes, layers, and properties:
+*   `latitude`, `longitude`: Center coordinates (required).
+*   `radius`: Search radius in meters (optional, default: `1000`).
+*   `zoom`: Target tile zoom level (optional, defaults to `max_zoom`).
+
+```bash
+curl "http://localhost:35248/api/map?latitude=41.8902&longitude=12.4922&radius=500"
+```
+
+#### Extract Map Feature by ID: `GET /api/map?id={id}&latitude={lat}&longitude={lon}`
+Decodes and returns the complete geometry (coordinates) and attributes of a specific feature:
+*   `id`: Composite feature ID or raw OSM ID (required).
+*   `latitude`, `longitude`: Approximate coordinates used to locate the relevant tiles (required).
+*   `radius`: Search radius in meters (optional, default: `1000`).
+*   `zoom`: Target tile zoom level (optional, defaults to `max_zoom`).
+
+```bash
+curl "http://localhost:35248/api/map?id=1234567:buildings&latitude=41.8902&longitude=12.4922"
+```
 
 ## Model Context Protocol (MCP)
 
@@ -245,6 +275,25 @@ Cronotopia provides an MCP endpoint at `/mcp` supporting JSON-RPC 2.0 over HTTP 
     *   Retrieve full Wikipedia article sections by ID or Wikidata QID integer.
     *   Arguments:
         *   `id` (integer, required)
+4.  **`get_map_config`**
+    *   Retrieve map settings, including default center coordinates and min/max available zoom levels.
+    *   Arguments: none.
+5.  **`get_map_centroids`**
+    *   Retrieve centroids, bounding boxes, and metadata of vector map features (roads, buildings, water, places, POIs) around given coordinates and radius.
+    *   Arguments:
+        *   `latitude` (number, required)
+        *   `longitude` (number, required)
+        *   `radius` (number, optional, default: 1000): Search radius in meters.
+        *   `zoom` (integer, optional): Tile zoom level (defaults to map `max_zoom`).
+        *   `limit` (integer, optional, default: 50): Maximum number of centroids to return.
+6.  **`get_map_feature`**
+    *   Retrieve a specific map feature with its full geometry coordinates and properties by ID around a given location.
+    *   Arguments:
+        *   `id` (string, required): Composite feature ID or raw OSM ID.
+        *   `latitude` (number, required): Latitude near the feature to locate its tile.
+        *   `longitude` (number, required): Longitude near the feature to locate its tile.
+        *   `radius` (number, optional, default: 1000): Search radius in meters.
+        *   `zoom` (integer, optional): Tile zoom level (defaults to map `max_zoom`).
 
 ## Acknowledgments
 
