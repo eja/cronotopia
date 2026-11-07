@@ -150,7 +150,7 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 		resp.Result = map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "cronotopia", "version": "9.0.0"},
+			"serverInfo":      map[string]any{"name": Name, "version": Version},
 		}
 	case "notifications/initialized":
 		return jsonRPCResponse{}
@@ -205,6 +205,44 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 							"id": map[string]any{"type": "integer"},
 						},
 						"required": []string{"id"},
+					},
+				},
+				{
+					"name":        "get_map_config",
+					"description": "Get map configuration including default center coordinates and min/max available zoom levels.",
+					"inputSchema": map[string]any{
+						"type":       "object",
+						"properties": map[string]any{},
+					},
+				},
+				{
+					"name":        "get_map_centroids",
+					"description": "Retrieve centroids, bounding boxes, and metadata of vector map features (e.g. roads, buildings, water, places, POIs) around given coordinates and radius.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"latitude":  map[string]any{"type": "number", "description": "Center latitude."},
+							"longitude": map[string]any{"type": "number", "description": "Center longitude."},
+							"radius":    map[string]any{"type": "number", "default": 1000, "description": "Search radius in meters (default 1000)."},
+							"zoom":      map[string]any{"type": "integer", "description": "Tile zoom level (defaults to map max zoom)."},
+							"limit":     map[string]any{"type": "integer", "default": 50, "description": "Maximum number of centroids to return."},
+						},
+						"required": []string{"latitude", "longitude"},
+					},
+				},
+				{
+					"name":        "get_map_feature",
+					"description": "Retrieve a specific map feature with its full geometry coordinates and properties by ID around a given location.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":        map[string]any{"type": "string", "description": "Composite feature ID or raw OSM ID."},
+							"latitude":  map[string]any{"type": "number", "description": "Latitude near the feature to locate its tile."},
+							"longitude": map[string]any{"type": "number", "description": "Longitude near the feature to locate its tile."},
+							"radius":    map[string]any{"type": "number", "default": 1000, "description": "Search radius in meters around coordinates (default 1000)."},
+							"zoom":      map[string]any{"type": "integer", "description": "Tile zoom level (defaults to map max zoom)."},
+						},
+						"required": []string{"id", "latitude", "longitude"},
 					},
 				},
 			},
@@ -314,6 +352,80 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 			sb.WriteString(s.Content + "\n\n")
 		}
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": sb.String()}}}
+
+	case "get_map_config":
+		cfg := db.GetMapConfig()
+		data, _ := json.MarshalIndent(cfg, "", "  ")
+		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
+
+	case "get_map_centroids":
+		lat, _ := args["latitude"].(float64)
+		lon, _ := args["longitude"].(float64)
+		rad, _ := args["radius"].(float64)
+		if rad <= 0 {
+			rad = 1000.0
+		}
+
+		var zoom int
+		if z, ok := args["zoom"].(float64); ok && z > 0 {
+			zoom = int(z)
+		} else {
+			zoom = db.GetMapConfig().MaxZoom
+		}
+
+		limit := 50
+		if l, ok := args["limit"].(float64); ok && l > 0 {
+			limit = int(l)
+		}
+
+		centroids, err := MapExtractTileCentroids(db, lat, lon, rad, zoom)
+		if err != nil {
+			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
+		}
+		if centroids == nil {
+			centroids = []MapTileCentroid{}
+		}
+		if len(centroids) > limit {
+			centroids = centroids[:limit]
+		}
+		data, _ := json.MarshalIndent(centroids, "", "  ")
+		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
+
+	case "get_map_feature":
+		var id string
+		if s, ok := args["id"].(string); ok {
+			id = s
+		} else if num, ok := args["id"].(float64); ok {
+			id = strconv.FormatUint(uint64(num), 10)
+		}
+		if id == "" {
+			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "Feature id is required"}}}
+		}
+
+		lat, _ := args["latitude"].(float64)
+		lon, _ := args["longitude"].(float64)
+		rad, _ := args["radius"].(float64)
+		if rad <= 0 {
+			rad = 1000.0
+		}
+
+		var zoom int
+		if z, ok := args["zoom"].(float64); ok && z > 0 {
+			zoom = int(z)
+		} else {
+			zoom = db.GetMapConfig().MaxZoom
+		}
+
+		minLat, maxLat, minLon, maxLon := MapBoundingBox(lat, lon, rad/1000.0)
+		feat, err := MapExtractFeatureByID(db, id, minLon, minLat, maxLon, maxLat, zoom)
+		if err != nil {
+			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
+		}
+		if feat == nil {
+			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "Feature not found"}}}
+		}
+		data, _ := json.MarshalIndent(feat, "", "  ")
+		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
 	}
 	return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "Tool not found"}}}
 }

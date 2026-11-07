@@ -171,7 +171,7 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 		if targetLat != 0 || targetLon != 0 {
 			bestDist := math.MaxFloat64
 			for _, p := range places {
-				d := HaversineDistance(targetLat, targetLon, p.lat, p.lon)
+				d := MapHaversineDistance(targetLat, targetLon, p.lat, p.lon)
 				if d < bestDist {
 					bestDist = d
 					info.Lat = p.lat

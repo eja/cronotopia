@@ -98,7 +98,7 @@ func (h *DBHandler) SearchVectors(query string, limit int, searchParams ...Searc
 		info := h.GetEntityInfo(conn, res.EntityID, p.Lat, p.Lon)
 		matchCode := 0
 		if hasSpace {
-			if !info.HasCoord || HaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
+			if !info.HasCoord || MapHaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
 				continue
 			}
 			matchCode = info.Code

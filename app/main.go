@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.10.18"
+	Version = "8.11.7"
 )
 
 var (
@@ -161,6 +161,6 @@ func main() {
 			return
 		}
 
-		runAPIServer()
+		runWebServer()
 	}
 }

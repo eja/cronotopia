@@ -76,7 +76,7 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 			info := h.GetEntityInfo(conn, entID, p.Lat, p.Lon)
 			matchCode := 0
 			if hasSpace {
-				if !info.HasCoord || HaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
+				if !info.HasCoord || MapHaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
 					return nil
 				}
 				matchCode = info.Code

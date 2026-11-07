@@ -39,7 +39,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 	seenEntity := make(map[int]bool)
 
 	if hasSpace && !hasTime {
-		minLat, maxLat, minLon, maxLon := BoundingBox(p.Lat, p.Lon, p.RadiusKm)
+		minLat, maxLat, minLon, maxLon := MapBoundingBox(p.Lat, p.Lon, p.RadiusKm)
 		sqlQuery := `
 			SELECT 
 				p.entity_id, p.prop_code, 
@@ -62,7 +62,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 				}
 				lat := stmt.ColumnFloat(2)
 				lon := stmt.ColumnFloat(3)
-				dist := HaversineDistance(p.Lat, p.Lon, lat, lon)
+				dist := MapHaversineDistance(p.Lat, p.Lon, lat, lon)
 				if dist > p.RadiusKm {
 					return nil
 				}
@@ -210,7 +210,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 		}
 
 	} else {
-		minLat, maxLat, minLon, maxLon := BoundingBox(p.Lat, p.Lon, p.RadiusKm)
+		minLat, maxLat, minLon, maxLon := MapBoundingBox(p.Lat, p.Lon, p.RadiusKm)
 		var timeClauses []string
 		var timeArgs []any
 		var orderSQL string
@@ -284,7 +284,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 				}
 				lat := stmt.ColumnFloat(2)
 				lon := stmt.ColumnFloat(3)
-				dist := HaversineDistance(p.Lat, p.Lon, lat, lon)
+				dist := MapHaversineDistance(p.Lat, p.Lon, lat, lon)
 				if dist > p.RadiusKm {
 					return nil
 				}
