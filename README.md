@@ -2,22 +2,23 @@
 
 An offline-first spatio-temporal database engine and map visualization server written in Go.
 
-Cronotopia ingests and indexes data from Wikidata and Wikipedia, stores vector map tiles, and includes a native neural inference engine for vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, and map tiles are stored in a single SQLite database file.
+Cronotopia ingests and indexes data from Wikidata and Wikipedia, stores vector map tiles and elevation data, and includes a native neural inference engine for vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, vector tiles, and elevation raster tiles are stored in a single SQLite database file.
 
 ## Overview
 
-Cronotopia is built to query historical events and geographic data without external services or internet access. It combines historical entity extraction, full-text article sections, and an integrated vector tile server.
+Cronotopia is built to query historical events and geographic data without external services or internet access. It combines historical entity extraction, full-text article sections, 3D terrain, and an integrated vector tile server.
 
 The system includes a pure Go execution engine for quantized GGUF embedding models. This enables semantic and hybrid search locally on CPU without any dependencies. In addition to a web frontend and REST API, Cronotopia implements a Model Context Protocol (MCP) server for integration with AI tools and agents.
 
 ## Key Features
 
 *   **100% Offline:** Operates with no network dependencies once the database is populated. No external database engines or runtime libraries required.
-*   **Single-File & Compressed Storage:** Entities, coordinates, timestamps, article sections (FTS5), spatial R*Trees, vector embeddings, ANN clusters, GGUF weights, and map tiles live in one SQLite file. Supports transparent, zero-extraction read-only querying directly from seekable Zstandard-compressed (`.zst`) files.
+*   **Single-File & Compressed Storage:** Entities, coordinates, timestamps, article sections (FTS5), spatial R*Trees, vector embeddings, ANN clusters, GGUF weights, vector map tiles, and elevation tiles live in one SQLite file. Supports transparent, zero-extraction read-only querying directly from seekable Zstandard-compressed (`.zst`) files.
 *   **Data Ingestion:**
     *   **Wikidata:** Stream ingestion of large dumps (`.json`, `.gz`, `.bz2`) extracting temporal events, geographic coordinates, and entity links.
     *   **Wikipedia:** Ingestion of Wikipedia Enterprise HTML dumps (`tar.gz`) parsed into structured sections with an FTS5 index.
     *   **MBTiles:** Direct import of Mapbox vector tiles (`.mbtiles`) into the internal tile schema.
+    *   **NOAA ETOPO:** Import of ETOPO GeoTIFF files into Terrarium-encoded elevation tiles for 3D terrain rendering and hillshading.
     *   **GGUF Models:** Direct import of model weights into SQLite for local embedding generation.
     *   **Wikilite:** One-step import of existing [Wikilite](https://github.com/eja/wikilite) SQLite databases.
 *   **Embedded AI & Semantic Search:**
@@ -27,7 +28,7 @@ The system includes a pure Go execution engine for quantized GGUF embedding mode
     *   Hybrid retrieval combining BM25 full-text scoring, vector cosine distance, and spatio-temporal filters via Reciprocal Rank Fusion (RRF).
     *   Optional support for external embedding APIs.
 *   **Spatio-Temporal Queries:** Fast spatial bounding-box checks using SQLite R*Tree, Haversine distance calculations, and Julian day calendar conversions for historical dates (exact date, before, after).
-*   **Vector Tile Server & Spatial Feature Extraction:** Serves vector tiles (PBF/MVT) directly to an embedded MapLibre GL frontend, and extracts spatial centroids, bounding boxes, or complete geometries directly from stored tiles on demand.
+*   **Vector Tile Server, 3D Terrain & Spatial Feature Extraction:** Serves vector tiles (PBF/MVT) and raster-dem elevation tiles (Terrarium PNG) to an embedded MapLibre GL frontend with 3D terrain and hillshade support, and extracts spatial centroids, bounding boxes, or complete geometries directly from stored tiles on demand.
 *   **MCP Server:** Native `/mcp` endpoint exposing historical, semantic, and vector map tools over JSON-RPC 2.0 (POST) and Server-Sent Events (GET).
 
 ## Installation
@@ -60,6 +61,11 @@ Cronotopia operates in one of the following execution modes:
 #### Import Map Tiles
 ```bash
 ./cronotopia --db cronotopia.db --import-mbtiles ./planet.mbtiles
+```
+
+#### Import ETOPO Elevation Data
+```bash
+./cronotopia --db cronotopia.db --import-etopo ./ETOPO_2022_v1_30s_N90W180_surface.tif
 ```
 
 #### Import Wikidata Dump
@@ -145,6 +151,7 @@ The MapLibre interface will be available at `http://localhost:35248`.
 | `--import-wikipedia` | `""` | Path or URL to Wikipedia Enterprise HTML dump (`.tar.gz`). |
 | `--import-wikilite` | `""` | Path to a pre-indexed Wikilite SQLite database. |
 | `--import-mbtiles` | `""` | Path to an MBTiles file. |
+| `--import-etopo` | `""` | Path to NOAA ETOPO GeoTIFF file. |
 | `--import-gguf` | `""` | Path to a GGUF model file. |
 | `--ai-sync` | `false` | Generate vector embeddings and ANN index for unindexed sections, then exit. |
 | `--ai-ann` | `true` | Generate ANN clustered vector index during embedding sync. |
@@ -230,6 +237,12 @@ Serves vector tiles (PBF/MVT) directly from the internal SQLite schema.
 curl "http://localhost:35248/tiles/14/8711/5684.pbf"
 ```
 
+#### Elevation Tile PNG: `GET /tiles/elevations/{z}/{x}/{y}.png`
+Serves Terrarium-encoded raster-dem PNG elevation tiles for 3D terrain rendering and hillshading.
+```bash
+curl "http://localhost:35248/tiles/elevations/4/8/5.png"
+```
+
 #### Extract Map Centroids: `GET /api/map?latitude={lat}&longitude={lon}`
 Extracts vector features from intersecting vector tiles within a radius, returning centroids, bounding boxes, layers, and properties:
 *   `latitude`, `longitude`: Center coordinates (required).
@@ -300,6 +313,7 @@ Cronotopia provides an MCP endpoint at `/mcp` supporting JSON-RPC 2.0 over HTTP 
 *   **[Wikidata](https://www.wikidata.org/):** Source for entities, coordinates, dates, and claims.
 *   **[Wikipedia](https://www.wikipedia.org/):** Source for encyclopedic text and article structure.
 *   **[OpenStreetMap](https://www.openstreetmap.org/):** Geospatial data source for map tiles.
+*   **[NOAA ETOPO](https://www.ncei.noaa.gov/products/etopo-global-relief-model):** Global relief model for terrain elevations and bathymetry.
 *   **[Qwen Team](https://github.com/QwenLM):** Base embedding model architecture.
 *   **[MapLibre](https://maplibre.org/):** Client-side vector map renderer.
 *   **[SQLite](https://www.sqlite.org/):** Embedded storage engine.
