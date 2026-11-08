@@ -35,9 +35,65 @@ type MapTileCentroid struct {
 	ID         string         `json:"id"`
 	Layer      string         `json:"layer"`
 	Type       string         `json:"type"`
+	Height     *float64       `json:"height,omitempty"`
+	Elevation  *float64       `json:"elevation,omitempty"`
 	Properties map[string]any `json:"properties"`
 	Center     [2]float64     `json:"center"`
 	BBox       [4]float64     `json:"bbox"`
+}
+
+func parseOptionalFloat(val any) *float64 {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case float64:
+		return &v
+	case float32:
+		f := float64(v)
+		return &f
+	case int:
+		f := float64(v)
+		return &f
+	case int64:
+		f := float64(v)
+		return &f
+	case int32:
+		f := float64(v)
+		return &f
+	case uint:
+		f := float64(v)
+		return &f
+	case uint64:
+		f := float64(v)
+		return &f
+	case uint32:
+		f := float64(v)
+		return &f
+	case string:
+		s := strings.TrimSpace(v)
+		s = strings.TrimSuffix(s, "m")
+		s = strings.TrimSuffix(s, "M")
+		s = strings.TrimSpace(s)
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return &f
+		}
+	}
+	return nil
+}
+
+func extractFloatProperty(props map[string]any, keys ...string) *float64 {
+	if props == nil {
+		return nil
+	}
+	for _, k := range keys {
+		if val, exists := props[k]; exists {
+			if f := parseOptionalFloat(val); f != nil {
+				return f
+			}
+		}
+	}
+	return nil
 }
 
 func handleMap(w http.ResponseWriter, r *http.Request) {
@@ -238,10 +294,14 @@ func MapExtractTileCentroids(h *DBHandler, centerLat, centerLon, radiusMeters fl
 	centroids := make([]MapTileCentroid, len(features))
 	for i, f := range features {
 		center, bbox := mapCalculateCentroidAndBBox(f.Geometry)
+		height := extractFloatProperty(f.Properties, "height", "render_height")
+		elevation := extractFloatProperty(f.Properties, "elevation", "ele")
 		centroids[i] = MapTileCentroid{
 			ID:         f.ID,
 			Layer:      f.Layer,
 			Type:       f.Type,
+			Height:     height,
+			Elevation:  elevation,
 			Properties: f.Properties,
 			Center:     center,
 			BBox:       bbox,

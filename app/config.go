@@ -14,6 +14,7 @@ type Config struct {
 	wikidataImport      string
 	wikiliteImport      string
 	mbtilesImport       string
+	etopoImport         string
 	ggufImport          string
 	aiAnn               bool
 	aiAnnSize           int

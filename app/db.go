@@ -106,7 +106,8 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		options.wikidataImport == "" &&
 		options.wikiliteImport == "" &&
 		options.ggufImport == "" &&
-		options.mbtilesImport == ""
+		options.mbtilesImport == "" &&
+		options.etopoImport == ""
 
 	var f *os.File
 	var err error
@@ -352,6 +353,14 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			);`,
 
 			`CREATE TABLE IF NOT EXISTS tiles (
+				zoom_level INTEGER,
+				tile_column INTEGER,
+				tile_row INTEGER,
+				tile_data BLOB,
+				PRIMARY KEY(zoom_level, tile_column, tile_row)
+			) WITHOUT ROWID;`,
+
+			`CREATE TABLE IF NOT EXISTS elevations (
 				zoom_level INTEGER,
 				tile_column INTEGER,
 				tile_row INTEGER,

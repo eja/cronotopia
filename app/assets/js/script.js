@@ -273,11 +273,12 @@ async function initMap() {
         center: [mapConfig.center_lng, mapConfig.center_lat],
         zoom: mapConfig.zoom,
         minZoom: mapConfig.min_zoom,
-        maxZoom: 22
+        maxZoom: 22,
+        maxPitch: 85
     });
 
     map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserHeading: true }));
-    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
     const hideLoader = () => {
@@ -289,6 +290,27 @@ async function initMap() {
     };
 
     map.once('load', () => {
+        map.addSource('terrain-source', {
+            type: 'raster-dem',
+            tiles: ['/tiles/elevations/{z}/{x}/{y}.png'],
+            encoding: 'terrarium',
+            tileSize: 256,
+            maxzoom: 8
+        });
+        map.setTerrain({ source: 'terrain-source', exaggeration: 1.5 });
+
+        map.addLayer({
+            id: 'hills',
+            type: 'hillshade',
+            source: 'terrain-source',
+            paint: {
+                'hillshade-exaggeration': 0.25,
+                'hillshade-shadow-color': '#1a2228',
+                'hillshade-highlight-color': '#ffffff',
+                'hillshade-accent-color': '#334455'
+            }
+        });
+
         map.addSource('search-circle-source', {
             type: 'geojson',
             data: { type: 'FeatureCollection', features: [] }

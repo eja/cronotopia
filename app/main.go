@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.7"
+	Version = "8.11.8"
 )
 
 var (
@@ -33,6 +33,7 @@ func main() {
 	flag.StringVar(&options.wikiliteImport, "import-wikilite", "", "Import pre-indexed Wikilite SQLite database")
 	flag.StringVar(&options.ggufImport, "import-gguf", "", "Import GGUF model directly into the db")
 	flag.StringVar(&options.mbtilesImport, "import-mbtiles", "", "Import MBTiles file into the tiles table")
+	flag.StringVar(&options.etopoImport, "import-etopo", "", "Import NOAA ETOPO GeoTIFF into elevations table")
 
 	flag.BoolVar(&options.aiSync, "ai-sync", false, "Generate vector embeddings for imported articles")
 	flag.BoolVar(&options.aiAnn, "ai-ann", true, "Generate ANN clustered vector index")
@@ -123,6 +124,14 @@ func main() {
 			log.Fatalf("MBTiles import error: %v", err)
 		}
 		log.Println("MBTiles import completed successfully.")
+	}
+
+	if options.etopoImport != "" {
+		importing = true
+		if err := RunETOPOImport(db, options.etopoImport); err != nil {
+			log.Fatalf("ETOPO import error: %v", err)
+		}
+		log.Println("ETOPO import completed successfully.")
 	}
 
 	if options.wikidataImport != "" {

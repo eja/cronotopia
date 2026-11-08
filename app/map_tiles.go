@@ -42,6 +42,30 @@ func (h *DBHandler) GetTileData(z, x, y int) ([]byte, error) {
 	return tileData, err
 }
 
+func (h *DBHandler) GetElevationTileData(z, x, y int) ([]byte, error) {
+	if z < 0 || z > 30 {
+		return nil, fmt.Errorf("zoom level out of bounds: %d", z)
+	}
+
+	conn := h.pool.Get(context.Background())
+	if conn == nil {
+		return nil, fmt.Errorf("failed to get connection")
+	}
+	defer h.pool.Put(conn)
+
+	yTms := (1 << z) - 1 - y
+	var tileData []byte
+	err := sqlitex.Execute(conn, "SELECT tile_data FROM elevations WHERE zoom_level=? AND tile_column=? AND tile_row=?", &sqlitex.ExecOptions{
+		Args: []any{z, x, yTms},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			tileData = make([]byte, stmt.ColumnLen(0))
+			stmt.ColumnBytes(0, tileData)
+			return nil
+		},
+	})
+	return tileData, err
+}
+
 func handleTiles(w http.ResponseWriter, r *http.Request) {
 	cleanPath := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(cleanPath, "/")
@@ -50,9 +74,13 @@ func handleTiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isElevation := len(parts) >= 4 && parts[1] == "elevations"
+
 	z, errZ := strconv.Atoi(parts[len(parts)-3])
 	x, errX := strconv.Atoi(parts[len(parts)-2])
-	yStr := strings.TrimSuffix(parts[len(parts)-1], ".pbf")
+	yStr := parts[len(parts)-1]
+	yStr = strings.TrimSuffix(yStr, ".pbf")
+	yStr = strings.TrimSuffix(yStr, ".png")
 	y, errY := strconv.Atoi(yStr)
 
 	if errZ != nil || errX != nil || errY != nil || z < 0 || z > 30 {
@@ -60,7 +88,22 @@ func handleTiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := db.GetTileData(z, x, y)
+	var data []byte
+	var err error
+
+	if isElevation {
+		data, err = db.GetElevationTileData(z, x, y)
+		if err != nil || len(data) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write(data)
+		return
+	}
+
+	data, err = db.GetTileData(z, x, y)
 	if err != nil || len(data) == 0 {
 		http.NotFound(w, r)
 		return
