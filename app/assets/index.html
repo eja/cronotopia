@@ -96,6 +96,54 @@
         </div>
     </div>
 
+    <div class="modal fade" id="layerModal" tabindex="-1" style="display:none;" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content shadow">
+                <div class="modal-header py-2 px-3">
+                    <h6 class="modal-title fw-bold mb-0">Map Layers</h6>
+                    <button type="button" class="btn-close" id="btn-layer-modal-close-x" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="d-flex flex-column gap-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-check-label fw-semibold small mb-0" for="layer-toggle-contours">Contours</label>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="layer-toggle-contours">
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-check-label fw-semibold small mb-0" for="layer-toggle-elevation">3D Terrain</label>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="layer-toggle-elevation">
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-check-label fw-semibold small mb-0" for="layer-toggle-buildings">Buildings</label>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="layer-toggle-buildings" checked>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-check-label fw-semibold small mb-0" for="layer-toggle-pois">Labels</label>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="layer-toggle-pois" checked>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label class="form-check-label fw-semibold small mb-0" for="layer-toggle-roads">Roads</label>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="layer-toggle-roads" checked>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer py-2 px-3">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-layer-modal-close">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade" id="articleModal" tabindex="-1" style="display:none;" aria-hidden="true">
         <div class="modal-dialog modal-dialog-scrollable modal-lg">
             <div class="modal-content">
@@ -118,7 +166,10 @@
     </div>
 
     <script src="js/maplibre-gl.js"></script>
+    <script src="js/maplibre-contour.js"></script>
     <script src="js/basemaps.js"></script>
-    <script src="js/script.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/markers.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html>
