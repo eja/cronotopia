@@ -15,7 +15,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -447,7 +446,7 @@ func RunETOPOImport(db *DBHandler, filePath string) error {
 	_ = sqlitex.Execute(conn, "DELETE FROM elevations", nil)
 
 	const maxZ = 7
-	workers := runtime.NumCPU()
+	workers := numWorkers()
 
 	for z := 0; z <= maxZ; z++ {
 		worldSize := 256 * (1 << z)

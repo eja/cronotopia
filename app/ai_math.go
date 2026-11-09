@@ -36,7 +36,7 @@ func gqa(q, k, v []float32, seqLen int) []float32 {
 	groupSize := nH / nKV
 	out := make([]float32, seqLen*nH*hDim)
 
-	numWorkers := min(runtime.NumCPU(), nH)
+	numWorkers := min(numWorkers(), nH)
 	headCh := make(chan int, nH)
 	for h := range nH {
 		headCh <- h

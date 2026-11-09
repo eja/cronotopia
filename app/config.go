@@ -2,6 +2,10 @@
 
 package main
 
+import (
+	"runtime"
+)
+
 type Config struct {
 	dbPath              string
 	compress            bool
@@ -26,4 +30,12 @@ type Config struct {
 	aiModelPrefixSave   string
 	aiModelPrefixSearch string
 	aiSync              bool
+	threads             int
+}
+
+func numWorkers() int {
+	if options != nil && options.threads > 0 {
+		return options.threads
+	}
+	return runtime.GOMAXPROCS(0)
 }

@@ -3,10 +3,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"sync/atomic"
 	"time"
 
 	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
@@ -14,7 +16,7 @@ import (
 )
 
 const (
-	seekableFrameSize = 128 * 1024
+	seekableFrameSize = 64 * 1024
 )
 
 type decompressCountReader struct {
@@ -50,7 +52,7 @@ func CompressDB(srcPath, dstPath string) error {
 	}
 	defer dst.Close()
 
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	if err != nil {
 		return fmt.Errorf("failed to create zstd encoder: %w", err)
 	}
@@ -62,35 +64,36 @@ func CompressDB(srcPath, dstPath string) error {
 	}
 
 	start := time.Now()
-	log.Printf("Compressing %s (%d bytes) -> %s...", srcPath, srcStat.Size(), dstPath)
+	workers := numWorkers()
+	log.Printf("Compressing %s (%d bytes) -> %s using %d CPU cores...",
+		srcPath, srcStat.Size(), dstPath, workers)
 
-	buf := make([]byte, seekableFrameSize)
-	var written int64
-	nextMilestone := 10
+	var readBytes int64
+	var nextMilestone int64 = 10
 
-	for {
+	frameSource := func() ([]byte, error) {
+		buf := make([]byte, seekableFrameSize)
 		n, rErr := io.ReadFull(src, buf)
 		if n > 0 {
-			if _, wErr := w.Write(buf[:n]); wErr != nil {
-				return fmt.Errorf("write error: %w", wErr)
-			}
-			written += int64(n)
-
+			cur := atomic.AddInt64(&readBytes, int64(n))
 			if srcStat.Size() > 0 {
-				pct := int(written * 100 / srcStat.Size())
+				pct := (cur * 100) / srcStat.Size()
 				if pct >= nextMilestone && nextMilestone <= 100 {
 					log.Printf("Compressing progress: %d%% (%d / %d MB)",
-						nextMilestone, written/(1024*1024), srcStat.Size()/(1024*1024))
+						nextMilestone, cur/(1024*1024), srcStat.Size()/(1024*1024))
 					nextMilestone = (pct/10)*10 + 10
 				}
 			}
+			return buf[:n], nil
 		}
 		if rErr == io.EOF || rErr == io.ErrUnexpectedEOF {
-			break
+			return nil, nil
 		}
-		if rErr != nil {
-			return fmt.Errorf("read error: %w", rErr)
-		}
+		return nil, rErr
+	}
+
+	if err := w.WriteMany(context.Background(), frameSource, seekable.WithConcurrency(workers)); err != nil {
+		return fmt.Errorf("compression error: %w", err)
 	}
 
 	if err := w.Close(); err != nil {

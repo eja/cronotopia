@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -184,7 +183,7 @@ func (h *DBHandler) ProcessANN() error {
 	}
 
 	assignments := make([]int, total)
-	workers := runtime.NumCPU()
+	workers := numWorkers()
 
 	for iter := 0; iter < 10; iter++ {
 		var wg sync.WaitGroup

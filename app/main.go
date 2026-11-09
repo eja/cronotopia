@@ -46,6 +46,7 @@ func main() {
 	flag.StringVar(&options.aiModelPrefixSearch, "ai-model-prefix-search", "Instruct: Retrieve relevant passages\nQuery: ", "Prefix for query embeddings")
 	flag.BoolVar(&options.aiCache, "ai-cache", false, "Keep model weights cached in RAM")
 
+	flag.IntVar(&options.threads, "threads", 0, "Number of CPU threads to use (0 = auto)")
 	flag.StringVar(&options.webHost, "web-host", "127.0.0.1", "Web API server host")
 	flag.IntVar(&options.webPort, "web-port", 35248, "Web API server port")
 	flag.BoolVar(&options.log, "log", false, "Enable logging")

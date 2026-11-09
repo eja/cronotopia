@@ -16,6 +16,7 @@ import (
 	"time"
 
 	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
+	"github.com/SaveTheRbtz/zstd-seekable-format-go/pkg/framecache"
 	"github.com/klauspost/compress/zstd"
 	"modernc.org/sqlite/vfs"
 	"zombiezen.com/go/sqlite"
@@ -176,14 +177,18 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			_, _ = f.Seek(0, io.SeekStart)
 			handler.zstFile = f
 
-			dec, err := zstd.NewReader(nil)
+			dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
 			if err != nil {
 				f.Close()
 				return nil, fmt.Errorf("failed to initialize zstd decoder: %w", err)
 			}
 			handler.zstdDec = dec
 
-			sReader, err := seekable.NewReader(f, dec)
+			fCache := framecache.NewFIFO(framecache.Limits{
+				MaxFrames: 128,
+			})
+
+			sReader, err := seekable.NewReader(f, dec, seekable.WithReaderFrameCache(fCache))
 			if err != nil {
 				dec.Close()
 				f.Close()
