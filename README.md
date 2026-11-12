@@ -17,7 +17,7 @@ The system includes a pure Go execution engine for quantized GGUF embedding mode
 *   **Data Ingestion:**
     *   **Wikidata:** Stream ingestion of large dumps (`.json`, `.gz`, `.bz2`) extracting temporal events, geographic coordinates, and entity links.
     *   **Wikipedia:** Ingestion of Wikipedia Enterprise HTML dumps (`tar.gz`) parsed into structured sections with an FTS5 index.
-    *   **MBTiles:** Direct import of Mapbox vector tiles (`.mbtiles`) into the internal tile schema.
+    *   **PMTiles:** Direct import of Mapbox vector tiles (`.pmtiles`) into the internal tile schema.
     *   **NOAA ETOPO:** Import of ETOPO GeoTIFF files into Terrarium-encoded elevation tiles for 3D terrain rendering and hillshading.
     *   **GGUF Models:** Direct import of model weights into SQLite for local embedding generation.
     *   **Wikilite:** One-step import of existing [Wikilite](https://github.com/eja/wikilite) SQLite databases.
@@ -60,7 +60,7 @@ Cronotopia operates in one of the following execution modes:
 
 #### Import Map Tiles
 ```bash
-./cronotopia --db cronotopia.db --import-mbtiles ./planet.mbtiles
+./cronotopia --db cronotopia.db --import-pmtiles ./planet.pmtiles
 ```
 
 #### Import ETOPO Elevation Data
@@ -150,7 +150,7 @@ The MapLibre interface will be available at `http://localhost:35248`.
 | `--import-wikidata` | `""` | Path or URL to Wikidata dump (`.json`, `.gz`, `.bz2`). |
 | `--import-wikipedia` | `""` | Path or URL to Wikipedia Enterprise HTML dump (`.tar.gz`). |
 | `--import-wikilite` | `""` | Path to a pre-indexed Wikilite SQLite database. |
-| `--import-mbtiles` | `""` | Path to an MBTiles file. |
+| `--import-pmtiles` | `""` | Path to an PMTiles file. |
 | `--import-etopo` | `""` | Path to NOAA ETOPO GeoTIFF file. |
 | `--import-gguf` | `""` | Path to a GGUF model file. |
 | `--ai-sync` | `false` | Generate vector embeddings and ANN index for unindexed sections, then exit. |

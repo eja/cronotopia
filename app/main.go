@@ -13,7 +13,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.9"
+	Version = "8.11.12"
 )
 
 var (
@@ -32,8 +32,9 @@ func main() {
 	flag.StringVar(&options.wikipediaImport, "import-wikipedia", "", "Wikipedia Enterprise HTML dump URL or tar.gz file")
 	flag.StringVar(&options.wikiliteImport, "import-wikilite", "", "Import pre-indexed Wikilite SQLite database")
 	flag.StringVar(&options.ggufImport, "import-gguf", "", "Import GGUF model directly into the db")
-	flag.StringVar(&options.mbtilesImport, "import-mbtiles", "", "Import MBTiles file into the tiles table")
+	flag.StringVar(&options.pmtilesImport, "import-pmtiles", "", "Import PMTiles file into the tiles table")
 	flag.StringVar(&options.etopoImport, "import-etopo", "", "Import NOAA ETOPO GeoTIFF into elevations table")
+	flag.IntVar(&options.zoom, "zoom", 12, "Max zoom level")
 
 	flag.BoolVar(&options.aiSync, "ai-sync", false, "Generate vector embeddings for imported articles")
 	flag.BoolVar(&options.aiAnn, "ai-ann", true, "Generate ANN clustered vector index")
@@ -119,12 +120,12 @@ func main() {
 		log.Println("Model imported into database.")
 	}
 
-	if options.mbtilesImport != "" {
+	if options.pmtilesImport != "" {
 		importing = true
-		if err := runMBTilesImport(db, options.mbtilesImport); err != nil {
-			log.Fatalf("MBTiles import error: %v", err)
+		if err := runPMTilesImport(db, options.pmtilesImport, options.zoom); err != nil {
+			log.Fatalf("PMTiles import error: %v", err)
 		}
-		log.Println("MBTiles import completed successfully.")
+		log.Println("PMTiles import completed successfully.")
 	}
 
 	if options.etopoImport != "" {

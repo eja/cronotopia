@@ -107,7 +107,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		options.wikidataImport == "" &&
 		options.wikiliteImport == "" &&
 		options.ggufImport == "" &&
-		options.mbtilesImport == "" &&
+		options.pmtilesImport == "" &&
 		options.etopoImport == ""
 
 	var f *os.File
@@ -357,13 +357,23 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				data BLOB NOT NULL
 			);`,
 
-			`CREATE TABLE IF NOT EXISTS tiles (
+			`CREATE TABLE IF NOT EXISTS tiles_data (
+				tile_data_id INTEGER PRIMARY KEY,
+				tile_data BLOB
+			);`,
+
+			`CREATE TABLE IF NOT EXISTS tiles_shallow (
 				zoom_level INTEGER,
 				tile_column INTEGER,
 				tile_row INTEGER,
-				tile_data BLOB,
+				tile_data_id INTEGER,
 				PRIMARY KEY(zoom_level, tile_column, tile_row)
 			) WITHOUT ROWID;`,
+
+			`CREATE VIEW IF NOT EXISTS tiles AS
+			SELECT s.zoom_level, s.tile_column, s.tile_row, d.tile_data
+			FROM tiles_shallow s
+			JOIN tiles_data d ON s.tile_data_id = d.tile_data_id;`,
 
 			`CREATE TABLE IF NOT EXISTS elevations (
 				zoom_level INTEGER,

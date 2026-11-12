@@ -17,7 +17,7 @@ type Config struct {
 	wikipediaImport     string
 	wikidataImport      string
 	wikiliteImport      string
-	mbtilesImport       string
+	pmtilesImport       string
 	etopoImport         string
 	ggufImport          string
 	aiAnn               bool
@@ -31,6 +31,7 @@ type Config struct {
 	aiModelPrefixSearch string
 	aiSync              bool
 	threads             int
+	zoom                int
 }
 
 func numWorkers() int {
