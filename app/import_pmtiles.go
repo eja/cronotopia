@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -328,6 +329,10 @@ func runPMTilesImport(db *DBHandler, srcPMTilesPath string, maxZoom int) (err er
 	}
 	defer db.pool.Put(conn)
 
+	if err := initMapSchema(conn); err != nil {
+		return err
+	}
+
 	_ = sqlitex.ExecuteTransient(conn, "PRAGMA synchronous = OFF", nil)
 	_ = sqlitex.ExecuteTransient(conn, "PRAGMA journal_mode = MEMORY", nil)
 	_ = sqlitex.ExecuteTransient(conn, "PRAGMA cache_size = -500000", nil)
@@ -556,5 +561,34 @@ func runPMTilesImport(db *DBHandler, srcPMTilesPath string, maxZoom int) (err er
 	log.Printf("Import complete! Inserted %d coordinates and %d unique blobs in %s",
 		totalCoords, uniqueBlobs, time.Since(startTime).Round(time.Second))
 
+	return nil
+}
+
+func initMapSchema(conn *sqlite.Conn) error {
+	sqls := []string{
+		`CREATE TABLE IF NOT EXISTS tiles_data (
+			tile_data_id INTEGER PRIMARY KEY,
+			tile_data BLOB
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS tiles_shallow (
+			zoom_level INTEGER,
+			tile_column INTEGER,
+			tile_row INTEGER,
+			tile_data_id INTEGER,
+			PRIMARY KEY(zoom_level, tile_column, tile_row)
+		) WITHOUT ROWID;`,
+
+		`CREATE VIEW IF NOT EXISTS tiles AS
+		SELECT s.zoom_level, s.tile_column, s.tile_row, d.tile_data
+		FROM tiles_shallow s
+		JOIN tiles_data d ON s.tile_data_id = d.tile_data_id;`,
+	}
+
+	for _, s := range sqls {
+		if err := sqlitex.ExecuteTransient(conn, s, nil); err != nil {
+			return fmt.Errorf("error creating map schema: %w", err)
+		}
+	}
 	return nil
 }

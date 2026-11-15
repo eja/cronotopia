@@ -19,6 +19,13 @@ func runWikiliteImport(db *DBHandler, srcDBPath string) error {
 	}
 	defer db.pool.Put(conn)
 
+	if err := initKnowledgeSchema(conn); err != nil {
+		return err
+	}
+	if err := initAISchema(conn); err != nil {
+		return err
+	}
+
 	log.Printf("Attaching Wikilite database: %s", srcDBPath)
 	err := sqlitex.Execute(conn, "ATTACH DATABASE ? AS wikilite", &sqlitex.ExecOptions{
 		Args: []any{srcDBPath},

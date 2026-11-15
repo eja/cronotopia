@@ -23,6 +23,10 @@ func (h *DBHandler) SearchEntityLabels(searchQuery string, limit int, searchPara
 		return nil, nil
 	}
 
+	if !hasTable(conn, "entity_label_search") {
+		return nil, nil
+	}
+
 	var p SearchParams
 	if len(searchParams) > 0 {
 		p = searchParams[0]

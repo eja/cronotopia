@@ -23,6 +23,10 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 		return nil, nil
 	}
 
+	if !hasTable(conn, "section_search") {
+		return nil, nil
+	}
+
 	var p SearchParams
 	if len(searchParams) > 0 {
 		p = searchParams[0]

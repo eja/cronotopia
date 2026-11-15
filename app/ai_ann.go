@@ -31,14 +31,7 @@ func (h *DBHandler) AiHasANN() bool {
 	}
 	defer h.pool.Put(conn)
 
-	var found bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM vectors_ann_index LIMIT 1", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			found = true
-			return nil
-		},
-	})
-	return found
+	return hasTable(conn, "vectors_ann_index")
 }
 
 func (h *DBHandler) ProcessEmbeddings() error {
@@ -48,6 +41,10 @@ func (h *DBHandler) ProcessEmbeddings() error {
 		return fmt.Errorf("failed to get connection")
 	}
 	defer h.pool.Put(conn)
+
+	if err := initAISchema(conn); err != nil {
+		return err
+	}
 
 	var pendingSectionIDs []int
 	err := sqlitex.Execute(conn, `

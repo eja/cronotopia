@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -28,6 +29,16 @@ func ImportGGUFFromReader(db *DBHandler, r ReadSeekReaderAt) error {
 	parser, err := NewGGUFParser(r)
 	if err != nil {
 		return fmt.Errorf("failed to parse GGUF: %w", err)
+	}
+
+	conn := db.pool.Get(context.Background())
+	if conn == nil {
+		return fmt.Errorf("database busy")
+	}
+	defer db.pool.Put(conn)
+
+	if err := initAISchema(conn); err != nil {
+		return err
 	}
 
 	if err := db.AiClearModel(); err != nil {
@@ -61,12 +72,6 @@ func ImportGGUFFromReader(db *DBHandler, r ReadSeekReaderAt) error {
 	if numLayers > 0 {
 		_ = db.SettingPut("ai_layers", strconv.FormatUint(numLayers, 10))
 	}
-
-	conn := db.pool.Get(context.Background())
-	if conn == nil {
-		return fmt.Errorf("database busy")
-	}
-	defer db.pool.Put(conn)
 
 	endTx, err := sqlitex.ImmediateTransaction(conn)
 	if err != nil {
@@ -126,5 +131,50 @@ func ImportGGUFFromReader(db *DBHandler, r ReadSeekReaderAt) error {
 		}
 	}
 
+	return nil
+}
+
+func initAISchema(conn *sqlite.Conn) error {
+	sqls := []string{
+		`CREATE TABLE IF NOT EXISTS vectors (
+			id INTEGER PRIMARY KEY,
+			embedding BLOB
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS vectors_ann_chunks (
+			id INTEGER PRIMARY KEY,
+			chunk BLOB
+		);`,
+		`CREATE TABLE IF NOT EXISTS vectors_ann_index (
+			vectors_id INTEGER NOT NULL,
+			chunk_id INTEGER NOT NULL,
+			chunk_position INTEGER NOT NULL,
+			PRIMARY KEY (chunk_id, chunk_position)
+		) WITHOUT ROWID;`,
+
+		`CREATE TABLE IF NOT EXISTS vectors_ann_centroids (
+			id INTEGER PRIMARY KEY,
+			centroid BLOB
+		);`,
+		`CREATE TABLE IF NOT EXISTS vectors_ann_centroid_chunks (
+			centroid_id INTEGER NOT NULL,
+			chunk_id INTEGER NOT NULL,
+			PRIMARY KEY(centroid_id, chunk_id)
+		) WITHOUT ROWID;`,
+
+		`CREATE TABLE IF NOT EXISTS tensors (
+			layer INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			dtype INTEGER NOT NULL,
+			dims TEXT NOT NULL,
+			data BLOB NOT NULL
+		);`,
+	}
+
+	for _, s := range sqls {
+		if err := sqlitex.ExecuteTransient(conn, s, nil); err != nil {
+			return fmt.Errorf("error creating AI schema: %w", err)
+		}
+	}
 	return nil
 }

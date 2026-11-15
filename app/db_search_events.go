@@ -23,6 +23,13 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 	hasSpace := p.HasSpace || (p.Lat != 0 || p.Lon != 0)
 	hasTime := p.HasTime || (p.Year != 0 || p.Month != 0 || p.Day != 0)
 
+	if hasSpace && !hasTable(conn, "entity_places_rtree") {
+		hasSpace = false
+	}
+	if hasTime && !hasTable(conn, "entity_times") {
+		hasTime = false
+	}
+
 	if !hasSpace && !hasTime {
 		return []EventResult{}, nil
 	}

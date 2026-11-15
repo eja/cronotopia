@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -47,6 +48,16 @@ type rawSection struct {
 
 func runWikipediaImport(src string) error {
 	log.Printf("Starting Wikipedia Enterprise import from %s...", src)
+
+	schemaConn := db.pool.Get(context.Background())
+	if schemaConn == nil {
+		return fmt.Errorf("failed to get connection")
+	}
+	if err := initKnowledgeSchema(schemaConn); err != nil {
+		db.pool.Put(schemaConn)
+		return err
+	}
+	db.pool.Put(schemaConn)
 
 	var reader io.Reader
 	var totalSize int64
@@ -229,4 +240,46 @@ func extractNodeText(n *html.Node) string {
 		sb.WriteString(extractNodeText(c))
 	}
 	return sb.String()
+}
+
+func initKnowledgeSchema(conn *sqlite.Conn) error {
+	sqls := []string{
+		`CREATE TABLE IF NOT EXISTS entities (
+			id INTEGER PRIMARY KEY,
+			article_id INTEGER,
+			title TEXT,
+			description TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_entities_art ON entities(article_id);`,
+
+		`CREATE TABLE IF NOT EXISTS sections (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			entity_id INTEGER NOT NULL,
+			title TEXT,
+			content TEXT,
+			pow INTEGER DEFAULT 0
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_sections_entity ON sections(entity_id);`,
+
+		`CREATE VIRTUAL TABLE IF NOT EXISTS section_search USING fts5(
+			title,
+			content,
+			content='sections',
+			content_rowid='id'
+		);`,
+
+		`CREATE VIRTUAL TABLE IF NOT EXISTS entity_label_search USING fts5(
+			title,
+			content='entities',
+			content_rowid='id',
+			tokenize='unicode61 remove_diacritics 2'
+		);`,
+	}
+
+	for _, s := range sqls {
+		if err := sqlitex.ExecuteTransient(conn, s, nil); err != nil {
+			return fmt.Errorf("error creating knowledge schema: %w", err)
+		}
+	}
+	return nil
 }

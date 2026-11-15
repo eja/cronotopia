@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -443,6 +444,10 @@ func RunETOPOImport(db *DBHandler, filePath string) error {
 	}
 	defer db.pool.Put(conn)
 
+	if err := initElevationSchema(conn); err != nil {
+		return err
+	}
+
 	_ = sqlitex.Execute(conn, "DELETE FROM elevations", nil)
 
 	const maxZ = 7
@@ -585,5 +590,20 @@ func RunETOPOImport(db *DBHandler, filePath string) error {
 	}
 
 	log.Printf("ETOPO import complete in %s", time.Since(start).Round(time.Second))
+	return nil
+}
+
+func initElevationSchema(conn *sqlite.Conn) error {
+	sql := `CREATE TABLE IF NOT EXISTS elevations (
+		zoom_level INTEGER,
+		tile_column INTEGER,
+		tile_row INTEGER,
+		tile_data BLOB,
+		PRIMARY KEY(zoom_level, tile_column, tile_row)
+	) WITHOUT ROWID;`
+
+	if err := sqlitex.ExecuteTransient(conn, sql, nil); err != nil {
+		return fmt.Errorf("error creating elevation schema: %w", err)
+	}
 	return nil
 }

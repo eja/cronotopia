@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
@@ -168,6 +169,19 @@ func (h *DBHandler) PostProcessWikidata() error {
 
 func runWikidataImport(src string) {
 	log.Println("Starting Wikidata import...")
+
+	conn := db.pool.Get(context.Background())
+	if conn == nil {
+		log.Fatalf("failed to get connection")
+	}
+	defer db.pool.Put(conn)
+
+	if err := initKnowledgeSchema(conn); err != nil {
+		log.Fatalf("schema init error: %v", err)
+	}
+	if err := initWikidataSchema(conn); err != nil {
+		log.Fatalf("schema init error: %v", err)
+	}
 
 	reader, totalSize, bytesRead, err := openInput(src)
 	if err != nil {
@@ -438,4 +452,42 @@ func wikidataDBWorker(in <-chan ExtractedData) {
 		WHERE link.code IN (19, 20)
 	`, nil)
 	_ = sqlitex.Execute(conn, "DROP TABLE IF EXISTS link", nil)
+}
+
+func initWikidataSchema(conn *sqlite.Conn) error {
+	sqls := []string{
+		`CREATE TABLE IF NOT EXISTS entity_times (
+			entity_id INTEGER NOT NULL,
+			prop_code INTEGER NOT NULL,
+			year INTEGER NOT NULL,
+			month INTEGER DEFAULT 0,
+			day INTEGER DEFAULT 0,
+			julian_day INTEGER NOT NULL,
+			PRIMARY KEY (entity_id, julian_day, prop_code)
+		) WITHOUT ROWID;`,
+		`CREATE INDEX IF NOT EXISTS idx_times_jd ON entity_times(julian_day, entity_id);`,
+
+		`CREATE TABLE IF NOT EXISTS entity_places (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			entity_id INTEGER NOT NULL,
+			prop_code INTEGER NOT NULL,
+			latitude REAL NOT NULL,
+			longitude REAL NOT NULL,
+			precision REAL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_places_entity ON entity_places(entity_id);`,
+
+		`CREATE VIRTUAL TABLE IF NOT EXISTS entity_places_rtree USING rtree(
+			id,
+			min_lat, max_lat,
+			min_lon, max_lon
+		);`,
+	}
+
+	for _, s := range sqls {
+		if err := sqlitex.ExecuteTransient(conn, s, nil); err != nil {
+			return fmt.Errorf("error creating wikidata schema: %w", err)
+		}
+	}
+	return nil
 }

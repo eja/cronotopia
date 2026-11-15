@@ -101,6 +101,22 @@ func isSQLiteHeader(header []byte) bool {
 	return len(header) >= 16 && string(header[:16]) == "SQLite format 3\x00"
 }
 
+func hasTable(conn *sqlite.Conn, name string) bool {
+	if conn == nil {
+		return false
+	}
+
+	var exists bool
+	_ = sqlitex.Execute(conn, "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ? LIMIT 1", &sqlitex.ExecOptions{
+		Args: []any{name},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			exists = true
+			return nil
+		},
+	})
+	return exists
+}
+
 func NewDBHandler(dbPath string) (*DBHandler, error) {
 	isReadOnly := !options.aiSync &&
 		options.wikipediaImport == "" &&
@@ -253,7 +269,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			return nil, fmt.Errorf("cannot open sqlite database for initialization: %w", err)
 		}
 
-		sqls := []string{
+		coreSQLs := []string{
 			"PRAGMA journal_mode = OFF;",
 			"PRAGMA synchronous = OFF;",
 			"PRAGMA temp_store = MEMORY;",
@@ -264,154 +280,13 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				key TEXT PRIMARY KEY,
 				value BLOB
 			) WITHOUT ROWID;`,
-
-			`CREATE TABLE IF NOT EXISTS entities (
-				id INTEGER PRIMARY KEY,
-				article_id INTEGER,
-				title TEXT,
-				description TEXT
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_entities_art ON entities(article_id);`,
-
-			`CREATE TABLE IF NOT EXISTS entity_times (
-				entity_id INTEGER NOT NULL,
-				prop_code INTEGER NOT NULL,
-				year INTEGER NOT NULL,
-				month INTEGER DEFAULT 0,
-				day INTEGER DEFAULT 0,
-				julian_day INTEGER NOT NULL,
-				PRIMARY KEY (entity_id, julian_day, prop_code)
-			) WITHOUT ROWID;`,
-			`CREATE INDEX IF NOT EXISTS idx_times_jd ON entity_times(julian_day, entity_id);`,
-
-			`CREATE TABLE IF NOT EXISTS entity_places (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				entity_id INTEGER NOT NULL,
-				prop_code INTEGER NOT NULL,
-				latitude REAL NOT NULL,
-				longitude REAL NOT NULL,
-				precision REAL
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_places_entity ON entity_places(entity_id);`,
-
-			`CREATE VIRTUAL TABLE IF NOT EXISTS entity_places_rtree USING rtree(
-				id,
-				min_lat, max_lat,
-				min_lon, max_lon
-			);`,
-
-			`CREATE TABLE IF NOT EXISTS sections (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				entity_id INTEGER NOT NULL,
-				title TEXT,
-				content TEXT,
-				pow INTEGER DEFAULT 0
-			);`,
-			`CREATE INDEX IF NOT EXISTS idx_sections_entity ON sections(entity_id);`,
-
-			`CREATE VIRTUAL TABLE IF NOT EXISTS section_search USING fts5(
-				title,
-				content,
-				content='sections',
-				content_rowid='id'
-			);`,
-
-			`CREATE VIRTUAL TABLE IF NOT EXISTS entity_label_search USING fts5(
-				title,
-				content='entities',
-				content_rowid='id',
-				tokenize='unicode61 remove_diacritics 2'
-			);`,
-
-			`CREATE TABLE IF NOT EXISTS vectors (
-				id INTEGER PRIMARY KEY,
-				embedding BLOB
-			);`,
-
-			`CREATE TABLE IF NOT EXISTS vectors_ann_chunks (
-				id INTEGER PRIMARY KEY,
-				chunk BLOB
-			);`,
-			`CREATE TABLE IF NOT EXISTS vectors_ann_index (
-				vectors_id INTEGER NOT NULL,
-				chunk_id INTEGER NOT NULL,
-				chunk_position INTEGER NOT NULL,
-        PRIMARY KEY (chunk_id, chunk_position)
-			) WITHOUT ROWID;`,
-
-			`CREATE TABLE IF NOT EXISTS vectors_ann_centroids (
-				id INTEGER PRIMARY KEY,
-				centroid BLOB
-			);`,
-			`CREATE TABLE IF NOT EXISTS vectors_ann_centroid_chunks (
-				centroid_id INTEGER NOT NULL,
-				chunk_id INTEGER NOT NULL,
-				PRIMARY KEY(centroid_id, chunk_id)
-			) WITHOUT ROWID;`,
-
-			`CREATE TABLE IF NOT EXISTS tensors (
-				layer INTEGER NOT NULL,
-				name TEXT NOT NULL,
-				dtype INTEGER NOT NULL,
-				dims TEXT NOT NULL,
-				data BLOB NOT NULL
-			);`,
-
-			`CREATE TABLE IF NOT EXISTS tiles_data (
-				tile_data_id INTEGER PRIMARY KEY,
-				tile_data BLOB
-			);`,
-
-			`CREATE TABLE IF NOT EXISTS tiles_shallow (
-				zoom_level INTEGER,
-				tile_column INTEGER,
-				tile_row INTEGER,
-				tile_data_id INTEGER,
-				PRIMARY KEY(zoom_level, tile_column, tile_row)
-			) WITHOUT ROWID;`,
-
-			`CREATE VIEW IF NOT EXISTS tiles AS
-			SELECT s.zoom_level, s.tile_column, s.tile_row, d.tile_data
-			FROM tiles_shallow s
-			JOIN tiles_data d ON s.tile_data_id = d.tile_data_id;`,
-
-			`CREATE TABLE IF NOT EXISTS elevations (
-				zoom_level INTEGER,
-				tile_column INTEGER,
-				tile_row INTEGER,
-				tile_data BLOB,
-				PRIMARY KEY(zoom_level, tile_column, tile_row)
-			) WITHOUT ROWID;`,
 		}
 
-		for _, s := range sqls {
+		for _, s := range coreSQLs {
 			if err := sqlitex.ExecuteTransient(initConn, s, nil); err != nil {
 				initConn.Close()
-				return nil, fmt.Errorf("error initializing table: %s: %w", s, err)
+				return nil, fmt.Errorf("error initializing database: %w", err)
 			}
-		}
-
-		var placesCount, rtreeCount int
-		_ = sqlitex.Execute(initConn, "SELECT COUNT(*) FROM entity_places", &sqlitex.ExecOptions{
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				placesCount = int(stmt.ColumnInt64(0))
-				return nil
-			},
-		})
-		_ = sqlitex.Execute(initConn, "SELECT COUNT(*) FROM entity_places_rtree", &sqlitex.ExecOptions{
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				rtreeCount = int(stmt.ColumnInt64(0))
-				return nil
-			},
-		})
-		if placesCount > 0 && rtreeCount < placesCount {
-			log.Printf("Syncing spatial R*Tree index (%d / %d records)...", rtreeCount, placesCount)
-			_ = sqlitex.Execute(initConn, `
-				INSERT INTO entity_places_rtree (id, min_lat, max_lat, min_lon, max_lon)
-				SELECT id, latitude, latitude, longitude, longitude 
-				FROM entity_places 
-				WHERE id NOT IN (SELECT id FROM entity_places_rtree)
-			`, nil)
 		}
 
 		initConn.Close()
@@ -474,6 +349,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		options.aiModelPrefixSave = prefixSave
 	}
 
+	log.Printf("DB opened: %s (readonly=%v, zstd=%v)", dbPath, isReadOnly, isZst)
 	return handler, nil
 }
 
