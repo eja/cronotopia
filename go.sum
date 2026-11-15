@@ -2,6 +2,8 @@ github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.10.0 h1:LvK7+C6qgz8BPnmn7x
 github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.10.0/go.mod h1:I28hc9eaiqKCoOB+9Wh/P1IOScfm0xCgyWC6DAo0lmo=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
+github.com/cosnicolaou/pbzip2 v1.0.6 h1:FYF6b2j4X4q3hZezd2AoUN/emLCtH/MbDGwJjiOacak=
+github.com/cosnicolaou/pbzip2 v1.0.6/go.mod h1:uCNfm0iE2wIKGRlLyq31M4toziFprNhEnvueGmh5u3M=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=

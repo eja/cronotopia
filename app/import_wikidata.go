@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"compress/bzip2"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -20,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cosnicolaou/pbzip2"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -39,6 +39,33 @@ var timeProps = map[int]bool{
 }
 var placeProps = map[int]bool{625: true}
 var linkProps = map[int]bool{19: true, 20: true}
+
+var propPatterns [][]byte
+
+func init() {
+	seen := make(map[int]bool)
+	for k := range timeProps {
+		seen[k] = true
+	}
+	for k := range placeProps {
+		seen[k] = true
+	}
+	for k := range linkProps {
+		seen[k] = true
+	}
+	for k := range seen {
+		propPatterns = append(propPatterns, []byte(`"`+"P"+strconv.Itoa(k)+`"`))
+	}
+}
+
+func hasRelevantProperty(line []byte) bool {
+	for _, p := range propPatterns {
+		if bytes.Contains(line, p) {
+			return true
+		}
+	}
+	return false
+}
 
 type ExtractedData struct {
 	ID    int
@@ -141,6 +168,17 @@ func (h *DBHandler) PostProcessWikidata() error {
 		return fmt.Errorf("failed to get connection")
 	}
 	defer h.pool.Put(conn)
+
+	var entityCount int
+	_ = sqlitex.Execute(conn, "SELECT COUNT(*) FROM entities", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			entityCount = int(stmt.ColumnInt64(0))
+			return nil
+		},
+	})
+	if entityCount == 0 {
+		return nil
+	}
 
 	log.Println("Pruning invalid coordinates and unlabelled entities...")
 	_ = sqlitex.Execute(conn, "DELETE FROM entity_places WHERE latitude < -90.0 OR latitude > 90.0 OR longitude < -180.0 OR longitude > 180.0", nil)
@@ -247,7 +285,6 @@ func openInput(src string) (io.ReadCloser, int64, *int64, error) {
 	bytesRead := new(int64)
 	counter := &countingReader{r: baseReader, count: bytesRead}
 
-	var finalReader io.Reader
 	ext := strings.ToLower(filepath.Ext(src))
 	if ext == ".gz" {
 		gz, err := gzip.NewReader(counter)
@@ -255,18 +292,18 @@ func openInput(src string) (io.ReadCloser, int64, *int64, error) {
 			baseReader.Close()
 			return nil, 0, nil, err
 		}
-		finalReader = gz
+		return &wrappedReadCloser{Reader: gz, Closer: baseReader}, totalSize, bytesRead, nil
 	} else if ext == ".bz2" {
-		finalReader = bzip2.NewReader(counter)
-	} else {
-		finalReader = counter
+		concurrency := numWorkers()
+		bz := pbzip2.NewReader(context.Background(), counter, pbzip2.DecompressionOptions(pbzip2.BZConcurrency(concurrency)))
+		return &wrappedReadCloser{Reader: bz, Closer: baseReader}, totalSize, bytesRead, nil
 	}
 
-	return &wrappedReadCloser{Reader: finalReader, Closer: baseReader}, totalSize, bytesRead, nil
+	return &wrappedReadCloser{Reader: counter, Closer: baseReader}, totalSize, bytesRead, nil
 }
 
 func parseWikidataStream(r io.Reader, out chan<- ExtractedData, totalSize int64, bytesRead *int64) {
-	reader := bufio.NewReaderSize(r, 1024*1024)
+	reader := bufio.NewReaderSize(r, 4*1024*1024)
 	count := 0
 	start := time.Now()
 
@@ -279,100 +316,102 @@ func parseWikidataStream(r io.Reader, out chan<- ExtractedData, totalSize int64,
 					line = line[:len(line)-1]
 				}
 
-				var ent Entity
-				if json.Unmarshal(line, &ent) == nil {
-					if idVal, ok := parseID(ent.ID); ok {
-						data := ExtractedData{ID: idVal}
-						hasRelevant := false
+				if hasRelevantProperty(line) {
+					var ent Entity
+					if json.Unmarshal(line, &ent) == nil {
+						if idVal, ok := parseID(ent.ID); ok {
+							data := ExtractedData{ID: idVal}
+							hasRelevant := false
 
-						for prop, claims := range ent.Claims {
-							if len(claims) == 0 {
-								continue
-							}
-							pCode, ok := parseID(prop)
-							if !ok {
-								continue
-							}
+							for prop, claims := range ent.Claims {
+								if len(claims) == 0 {
+									continue
+								}
+								pCode, ok := parseID(prop)
+								if !ok {
+									continue
+								}
 
-							isT := timeProps[pCode]
-							isP := placeProps[pCode]
-							isL := linkProps[pCode]
-							if !isT && !isP && !isL {
-								continue
-							}
+								isT := timeProps[pCode]
+								isP := placeProps[pCode]
+								isL := linkProps[pCode]
+								if !isT && !isP && !isL {
+									continue
+								}
 
-							valRaw := claims[0].Mainsnak.Datavalue.Value
-							if len(valRaw) == 0 {
-								continue
-							}
+								valRaw := claims[0].Mainsnak.Datavalue.Value
+								if len(valRaw) == 0 {
+									continue
+								}
 
-							if isT {
-								var tv TimeValue
-								if json.Unmarshal(valRaw, &tv) == nil && len(tv.Time) >= 11 {
-									tStr := tv.Time
-									if tStr[0] == '+' || tStr[0] == '-' {
-										y, _ := strconv.Atoi(tStr[1:5])
-										m, _ := strconv.Atoi(tStr[6:8])
-										d, _ := strconv.Atoi(tStr[9:11])
-										if tStr[0] == '-' {
-											y = -y
+								if isT {
+									var tv TimeValue
+									if json.Unmarshal(valRaw, &tv) == nil && len(tv.Time) >= 11 {
+										tStr := tv.Time
+										if tStr[0] == '+' || tStr[0] == '-' {
+											y, _ := strconv.Atoi(tStr[1:5])
+											m, _ := strconv.Atoi(tStr[6:8])
+											d, _ := strconv.Atoi(tStr[9:11])
+											if tStr[0] == '-' {
+												y = -y
+											}
+											data.Times = append(data.Times, TimeRecord{Code: pCode, Y: y, M: m, D: d})
+											hasRelevant = true
 										}
-										data.Times = append(data.Times, TimeRecord{Code: pCode, Y: y, M: m, D: d})
-										hasRelevant = true
 									}
 								}
-							}
 
-							if isP {
-								var cv CoordinateValue
-								if json.Unmarshal(valRaw, &cv) == nil {
-									if cv.Globe == "" || cv.Globe == "http://www.wikidata.org/entity/Q2" {
-										data.Place = append(data.Place, PlaceRecord{pCode, cv.Latitude, cv.Longitude, cv.Precision})
-										hasRelevant = true
-									}
-								}
-							}
-
-							if isL {
-								var ev EntityIdValue
-								if json.Unmarshal(valRaw, &ev) == nil {
-									if lVal, ok := parseID(ev.ID); ok {
-										data.Links = append(data.Links, LinkRecord{pCode, lVal})
-										hasRelevant = true
-									}
-								}
-							}
-						}
-
-						if hasRelevant {
-							var label, desc string
-							if l, ok := ent.Labels["en"]; ok && strings.TrimSpace(l.Value) != "" {
-								label = l.Value
-								if d, ok := ent.Descriptions["en"]; ok {
-									desc = d.Value
-								}
-							} else {
-								for lang, l := range ent.Labels {
-									if val := strings.TrimSpace(l.Value); val != "" {
-										label = val
-										if d, ok := ent.Descriptions[lang]; ok {
-											desc = d.Value
+								if isP {
+									var cv CoordinateValue
+									if json.Unmarshal(valRaw, &cv) == nil {
+										if cv.Globe == "" || cv.Globe == "http://www.wikidata.org/entity/Q2" {
+											data.Place = append(data.Place, PlaceRecord{pCode, cv.Latitude, cv.Longitude, cv.Precision})
+											hasRelevant = true
 										}
-										break
+									}
+								}
+
+								if isL {
+									var ev EntityIdValue
+									if json.Unmarshal(valRaw, &ev) == nil {
+										if lVal, ok := parseID(ev.ID); ok {
+											data.Links = append(data.Links, LinkRecord{pCode, lVal})
+											hasRelevant = true
+										}
 									}
 								}
 							}
 
-							if label != "" {
-								data.Query = append(data.Query, QueryRecord{label, desc})
-								out <- data
+							if hasRelevant {
+								var label, desc string
+								if l, ok := ent.Labels["en"]; ok && strings.TrimSpace(l.Value) != "" {
+									label = l.Value
+									if d, ok := ent.Descriptions["en"]; ok {
+										desc = d.Value
+									}
+								} else {
+									for lang, l := range ent.Labels {
+										if val := strings.TrimSpace(l.Value); val != "" {
+											label = val
+											if d, ok := ent.Descriptions[lang]; ok {
+												desc = d.Value
+											}
+											break
+										}
+									}
+								}
+
+								if label != "" {
+									data.Query = append(data.Query, QueryRecord{label, desc})
+									out <- data
+								}
 							}
 						}
 					}
 				}
 
 				count++
-				if count%50000 == 0 {
+				if count%10000 == 0 {
 					elapsed := time.Since(start)
 					pct := 0.0
 					if totalSize > 0 && *bytesRead > 0 {

@@ -10,6 +10,7 @@ require (
 
 require (
 	github.com/SaveTheRbtz/zstd-seekable-format-go/pkg v0.10.0
+	github.com/cosnicolaou/pbzip2 v1.0.6
 	github.com/klauspost/compress v1.20.1
 )
 
