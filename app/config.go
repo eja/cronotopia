@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	dbPath              string
+	sql                 bool
 	compress            bool
 	decompress          bool
 	log                 bool

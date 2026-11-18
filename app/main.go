@@ -3,17 +3,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"strings"
+
+	"zombiezen.com/go/sqlite/shell"
 )
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.15"
+	Version = "8.11.18"
 )
 
 var (
@@ -26,6 +29,7 @@ func main() {
 	options = &Config{}
 
 	flag.StringVar(&options.dbPath, "db", "cronotopia.db", "SQLite database path")
+	flag.BoolVar(&options.sql, "sql", false, "Start interactive SQLite shell")
 	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd (.zst)")
 	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd (.zst)")
 	flag.StringVar(&options.wikidataImport, "import-wikidata", "", "Wikidata dump URL or file (.json, .gz, .bz2)")
@@ -158,6 +162,16 @@ func main() {
 	}
 
 	if !importing {
+		if options.sql {
+			conn := db.pool.Get(context.Background())
+			if conn == nil {
+				log.Fatalf("Failed to obtain database connection for shell")
+			}
+			defer db.pool.Put(conn)
+			shell.Run(conn)
+			return
+		}
+
 		if err := aiInit(); err != nil {
 			log.Printf("AI initialization warning: %v", err)
 		} else {
