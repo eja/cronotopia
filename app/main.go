@@ -16,7 +16,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.18"
+	Version = "8.11.21"
 )
 
 var (
@@ -29,7 +29,7 @@ func main() {
 	options = &Config{}
 
 	flag.StringVar(&options.dbPath, "db", "cronotopia.db", "SQLite database path")
-	flag.BoolVar(&options.sql, "sql", false, "Start interactive SQLite shell")
+	flag.BoolVar(&options.dbShell, "dbShell", false, "Start interactive SQLite shell")
 	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd (.zst)")
 	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd (.zst)")
 	flag.StringVar(&options.wikidataImport, "import-wikidata", "", "Wikidata dump URL or file (.json, .gz, .bz2)")
@@ -38,6 +38,7 @@ func main() {
 	flag.StringVar(&options.ggufImport, "import-gguf", "", "Import GGUF model directly into the db")
 	flag.StringVar(&options.pmtilesImport, "import-pmtiles", "", "Import PMTiles file into the tiles table")
 	flag.StringVar(&options.etopoImport, "import-etopo", "", "Import NOAA ETOPO GeoTIFF into elevations table")
+	flag.StringVar(&options.mediaImport, "import-media", "", "Import media SQLite database")
 	flag.IntVar(&options.zoom, "zoom", 12, "Max zoom level")
 
 	flag.BoolVar(&options.aiSync, "ai-sync", false, "Generate vector embeddings for imported articles")
@@ -161,8 +162,16 @@ func main() {
 		log.Println("Wikilite import completed successfully.")
 	}
 
+	if options.mediaImport != "" {
+		importing = true
+		if err := runMediaImport(db, options.mediaImport); err != nil {
+			log.Fatalf("Media import error: %v", err)
+		}
+		log.Println("Media import completed successfully.")
+	}
+
 	if !importing {
-		if options.sql {
+		if options.dbShell {
 			conn := db.pool.Get(context.Background())
 			if conn == nil {
 				log.Fatalf("Failed to obtain database connection for shell")

@@ -125,6 +125,7 @@ func (h *DBHandler) SearchEntityLabels(searchQuery string, limit int, searchPara
 				DateEnd:   info.DateEnd,
 				Times:     info.Times,
 				Places:    info.Places,
+				Media:     info.Media,
 				Type:      "T",
 			}
 			results = append(results, res)

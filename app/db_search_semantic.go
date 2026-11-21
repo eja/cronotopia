@@ -120,6 +120,7 @@ func (h *DBHandler) SearchVectors(query string, limit int, searchParams ...Searc
 		res.DateEnd = info.DateEnd
 		res.Times = info.Times
 		res.Places = info.Places
+		res.Media = info.Media
 		res.Type = "S"
 		res.Snippet = Snippet(res.Text, 160)
 		res.Power = math.Max(0, math.Min(100, float64((v.Distance+1.0)/2.0*100.0)))

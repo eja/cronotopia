@@ -38,6 +38,10 @@ async function openArticle(entityId, articleId) {
     if (!entityId && !articleId) return;
     const titleEl = document.getElementById('articleModalTitle');
     const bodyEl = document.getElementById('articleModalBody');
+    const paginationEl = document.getElementById('articleModalPagination');
+
+    paginationEl.style.display = 'none';
+    if (typeof currentBook !== 'undefined') currentBook = null;
 
     titleEl.textContent = 'Loading article...';
     bodyEl.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
@@ -228,6 +232,43 @@ function renderResults(items) {
             `;
         }
 
+        let media = Array.isArray(item.media) ? item.media : [];
+        const mediaByMode = {};
+        media.forEach(m => {
+            const mode = (m.mode || 'media').toLowerCase();
+            if (!mediaByMode[mode]) mediaByMode[mode] = [];
+            mediaByMode[mode].push(m);
+        });
+
+        let mediaBtnsHtml = '';
+        let mediaPopupsHtml = '';
+        Object.keys(mediaByMode).forEach(mode => {
+            const list = mediaByMode[mode];
+            const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
+            const targetId = `media-box-${mode}-${idx}`;
+            mediaBtnsHtml += `<button type="button" class="btn btn-sm btn-panel-toggle btn-media-toggle" data-target="${targetId}">${modeLabel}</button>`;
+
+            let mediaItemsHtml = '';
+            list.forEach(m => {
+                const title = m.title || 'Untitled';
+                const safeTitle = title.replace(/"/g, '&quot;');
+                const langBadge = m.language ? `<span class="badge bg-info text-uppercase me-1">${m.language}</span>` : '';
+                mediaItemsHtml += `
+                    <li class="events-list-item">
+                        <button type="button" class="btn-title-link" data-id="${m.id}" data-mode="${m.mode}" data-length="${m.length || 0}" data-title="${safeTitle}">
+                            ${title}
+                        </button>
+                        ${langBadge}
+                    </li>
+                `;
+            });
+            mediaPopupsHtml += `
+                <div id="${targetId}" class="dropdown-popup-box media-dropdown-box mt-2" style="display: none;">
+                    <ol class="events-list mb-0 ps-3">${mediaItemsHtml}</ol>
+                </div>
+            `;
+        });
+
         const canRead = (itemType !== 'E' && itemType !== 'T') || Boolean(item.article_id);
         const readBtnHtml = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;">Article</button>` : '';
 
@@ -243,22 +284,27 @@ function renderResults(items) {
                 <div class="d-flex align-items-center flex-wrap gap-1">
                     ${timeBtnHtml}
                     ${spaceBtnHtml}
+                    ${mediaBtnsHtml}
                 </div>
                 ${readBtnHtml}
             </div>
             ${timePopupHtml}
             ${spacePopupHtml}
+            ${mediaPopupsHtml}
         `;
 
         card.addEventListener('click', (ev) => {
             const timeToggle = ev.target.closest('.btn-time-toggle');
             if (timeToggle) {
                 ev.stopPropagation();
-                const box = document.getElementById(timeToggle.getAttribute('data-target'));
-                const spaceBox = card.querySelector('.space-dropdown-box');
-                const spaceBtn = card.querySelector('.btn-space-toggle');
-                if (spaceBox) spaceBox.style.display = 'none';
-                if (spaceBtn) spaceBtn.classList.remove('active');
+                const targetId = timeToggle.getAttribute('data-target');
+                const box = document.getElementById(targetId);
+                card.querySelectorAll('.dropdown-popup-box').forEach(b => {
+                    if (b.id !== targetId) b.style.display = 'none';
+                });
+                card.querySelectorAll('.btn-panel-toggle').forEach(btn => {
+                    if (btn !== timeToggle) btn.classList.remove('active');
+                });
                 if (box) {
                     const willShow = box.style.display === 'none';
                     box.style.display = willShow ? 'block' : 'none';
@@ -270,15 +316,52 @@ function renderResults(items) {
             const spaceToggle = ev.target.closest('.btn-space-toggle');
             if (spaceToggle) {
                 ev.stopPropagation();
-                const box = document.getElementById(spaceToggle.getAttribute('data-target'));
-                const timeBox = card.querySelector('.time-dropdown-box');
-                const timeBtn = card.querySelector('.btn-time-toggle');
-                if (timeBox) timeBox.style.display = 'none';
-                if (timeBtn) timeBtn.classList.remove('active');
+                const targetId = spaceToggle.getAttribute('data-target');
+                const box = document.getElementById(targetId);
+                card.querySelectorAll('.dropdown-popup-box').forEach(b => {
+                    if (b.id !== targetId) b.style.display = 'none';
+                });
+                card.querySelectorAll('.btn-panel-toggle').forEach(btn => {
+                    if (btn !== spaceToggle) btn.classList.remove('active');
+                });
                 if (box) {
                     const willShow = box.style.display === 'none';
                     box.style.display = willShow ? 'block' : 'none';
                     spaceToggle.classList.toggle('active', willShow);
+                }
+                return;
+            }
+
+            const mediaToggle = ev.target.closest('.btn-media-toggle');
+            if (mediaToggle) {
+                ev.stopPropagation();
+                const targetId = mediaToggle.getAttribute('data-target');
+                const box = document.getElementById(targetId);
+                card.querySelectorAll('.dropdown-popup-box').forEach(b => {
+                    if (b.id !== targetId) b.style.display = 'none';
+                });
+                card.querySelectorAll('.btn-panel-toggle').forEach(btn => {
+                    if (btn !== mediaToggle) btn.classList.remove('active');
+                });
+                if (box) {
+                    const willShow = box.style.display === 'none';
+                    box.style.display = willShow ? 'block' : 'none';
+                    mediaToggle.classList.toggle('active', willShow);
+                }
+                return;
+            }
+
+            const titleLink = ev.target.closest('.btn-title-link');
+            if (titleLink) {
+                ev.stopPropagation();
+                const mediaId = titleLink.getAttribute('data-id');
+                const mode = (titleLink.getAttribute('data-mode') || '').toLowerCase();
+                const length = parseInt(titleLink.getAttribute('data-length') || '0', 10);
+                const title = titleLink.getAttribute('data-title');
+                if (mode === 'score') {
+                    openScore(mediaId, title);
+                } else {
+                    openBook(mediaId, title, length);
                 }
                 return;
             }

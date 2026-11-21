@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="css/bootstrap.min.css">
     <link rel="stylesheet" href="css/maplibre-gl.css">
     <link rel="stylesheet" href="css/style.css">
+    <script src="js/alphaTab.js"></script>
 </head>
 <body>
 
@@ -138,7 +139,7 @@
                     </div>
                 </div>
                 <div class="modal-footer py-2 px-3">
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-layer-modal-close">Close</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-layer-modal-close">&#10005; Close</button>
                 </div>
             </div>
         </div>
@@ -158,8 +159,34 @@
                         <div class="spinner-border text-primary" role="status"></div>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-modal-close">Close</button>
+                <div class="modal-footer d-flex justify-content-between align-items-center">
+                    <div id="articleModalPagination" class="d-flex align-items-center gap-2" style="display: none;">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="btn-book-prev">&#9664;</button>
+                        <span id="book-page-info" class="small text-muted fw-semibold"></span>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="btn-book-next">&#9654;</button>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm ms-auto" id="btn-modal-close">&#10005; Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="scoreModal" tabindex="-1" style="display:none;" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-scrollable modal-xl">
+            <div class="modal-content">
+                <div class="modal-header py-2 px-3 d-flex justify-content-between align-items-center">
+                    <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-primary btn-sm px-3" id="btn-score-play-pause">&#9654; Play</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm px-2" id="btn-score-stop">&#9209; Stop</button>
+                        <h5 class="modal-title mb-0 fs-6 fw-bold ms-1" id="scoreModalTitle">Score</h5>
+                    </div>
+                    <button type="button" class="btn-close" id="btn-score-modal-close-x" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-0 position-relative" id="scoreModalBody" style="min-height: 500px; max-height: calc(100vh - 160px); overflow-y: auto;">
+                    <div id="alphatab-container"></div>
+                </div>
+                <div class="modal-footer py-2 px-3">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btn-score-modal-close">&#10005; Close</button>
                 </div>
             </div>
         </div>
@@ -167,11 +194,11 @@
 
     <script src="js/init.js"></script>
     <script src="js/maplibre-gl.js"></script>
-    <script src="js/maplibre-gl.js"></script>
     <script src="js/maplibre-contour.js"></script>
     <script src="js/basemaps.js"></script>
     <script src="js/map.js"></script>
     <script src="js/markers.js"></script>
+    <script src="js/media.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

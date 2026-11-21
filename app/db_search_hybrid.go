@@ -81,6 +81,9 @@ func (h *DBHandler) SearchHybrid(query string, limit int, searchParams ...Search
 				if existing.item.ArticleID == 0 && res.ArticleID != 0 {
 					existing.item.ArticleID = res.ArticleID
 				}
+				if len(existing.item.Media) == 0 && len(res.Media) > 0 {
+					existing.item.Media = res.Media
+				}
 				existing.item.Type = "H"
 			} else {
 				candMap[res.EntityID] = &candidate{

@@ -8,7 +8,7 @@ import (
 
 type Config struct {
 	dbPath              string
-	sql                 bool
+	dbShell             bool
 	compress            bool
 	decompress          bool
 	log                 bool
@@ -20,6 +20,7 @@ type Config struct {
 	wikiliteImport      string
 	pmtilesImport       string
 	etopoImport         string
+	mediaImport         string
 	ggufImport          string
 	aiAnn               bool
 	aiAnnSize           int

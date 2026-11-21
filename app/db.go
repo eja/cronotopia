@@ -118,13 +118,14 @@ func hasTable(conn *sqlite.Conn, name string) bool {
 }
 
 func NewDBHandler(dbPath string) (*DBHandler, error) {
-	isReadOnly := !options.sql &&
+	isReadOnly := !options.dbShell &&
 		!options.aiSync &&
 		options.wikipediaImport == "" &&
 		options.wikidataImport == "" &&
 		options.wikiliteImport == "" &&
 		options.ggufImport == "" &&
 		options.pmtilesImport == "" &&
+		options.mediaImport == "" &&
 		options.etopoImport == ""
 
 	var f *os.File
@@ -152,7 +153,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 
 		if isZstdHeader(header) {
 			isZst = true
-			if options.sql {
+			if options.dbShell {
 				isReadOnly = true
 			}
 		} else if isSQLiteHeader(header) {

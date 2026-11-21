@@ -184,7 +184,8 @@ body, html {
 }
 
 .btn-time-link,
-.btn-coord-link {
+.btn-coord-link,
+.btn-title-link {
     background: #ffffff;
     border: 1px solid #dee2e6;
     border-radius: 3px;
@@ -194,10 +195,15 @@ body, html {
     cursor: pointer;
     line-height: 1.2;
     transition: all 0.12s ease;
+    text-align: left;
+    max-width: 100%;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .btn-time-link:hover,
-.btn-coord-link:hover {
+.btn-coord-link:hover,
+.btn-title-link:hover {
     background: #e7f1ff;
     border-color: #9ec5fe;
 }
@@ -295,4 +301,22 @@ body, html {
     #mobile-toggle-btn {
         display: inline-block !important;
     }
+}
+
+.at-cursor-bar {
+    background: rgba(255, 242, 0, 0.25) !important;
+}
+
+.at-selection div {
+    background: rgba(64, 64, 255, 0.1) !important;
+}
+
+.at-cursor-beat {
+    background: rgba(64, 64, 255, 0.75) !important;
+    width: 3px !important;
+}
+
+.at-highlight * {
+    fill: #0078ff !important;
+    stroke: #0078ff !important;
 }

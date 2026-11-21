@@ -109,6 +109,7 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 				DateEnd:   info.DateEnd,
 				Times:     info.Times,
 				Places:    info.Places,
+				Media:     info.Media,
 				Type:      "L",
 			}
 

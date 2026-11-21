@@ -226,6 +226,7 @@ func runWebServer() {
 					DateEnd:   ev.DateEnd,
 					Times:     ev.Times,
 					Places:    ev.Places,
+					Media:     ev.Media,
 					Type:      "E",
 					Power:     100.0,
 				})
@@ -272,6 +273,7 @@ func runWebServer() {
 	mux.HandleFunc("/api", handleUnifiedSearch)
 	mux.HandleFunc("/api/search", handleUnifiedSearch)
 	mux.HandleFunc("/api/article", handleUnifiedSearch)
+	mux.HandleFunc("/api/media", handleMedia)
 	mux.HandleFunc("/api/map", handleMap)
 	mux.HandleFunc("/tiles/", handleTiles)
 	mux.HandleFunc("/mcp", handleMCP)
@@ -297,5 +299,83 @@ func parseRange(val string) int {
 		return 1
 	default:
 		return 0
+	}
+}
+
+func handleMedia(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	q := r.URL.Query()
+	id, _ := strconv.Atoi(q.Get("id"))
+	if id <= 0 {
+		http.Error(w, "Missing or invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var offset int64
+	var length int64
+	if offStr := q.Get("offset"); offStr != "" {
+		offset, _ = strconv.ParseInt(offStr, 10, 64)
+	}
+	if lenStr := q.Get("length"); lenStr != "" {
+		length, _ = strconv.ParseInt(lenStr, 10, 64)
+	}
+
+	rangeHeader := r.Header.Get("Range")
+	isRange := false
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		parts := strings.Split(strings.TrimPrefix(rangeHeader, "bytes="), "-")
+		if len(parts) == 2 {
+			if s, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+				offset = s
+				isRange = true
+				if e, err := strconv.ParseInt(parts[1], 10, 64); err == nil && e >= s {
+					length = e - s + 1
+				}
+			}
+		}
+	}
+
+	data, totalLen, mode, err := db.MediaGet(id, offset, length)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	contentType := "text/plain; charset=utf-8"
+	switch mode {
+	case "score":
+		contentType = "application/vnd.recordare.musicxml+xml; charset=utf-8"
+	case "book":
+		contentType = "text/plain; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", contentType)
+
+	if isRange {
+		endByte := offset + int64(len(data)) - 1
+		if len(data) == 0 {
+			endByte = offset
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, endByte, totalLen))
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusPartialContent)
+	} else if offset > 0 || (length > 0 && length < totalLen) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(totalLen, 10))
+		w.WriteHeader(http.StatusOK)
+	}
+
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(data)
 	}
 }

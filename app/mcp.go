@@ -245,6 +245,19 @@ func processMCPCall(req jsonRPCRequest) jsonRPCResponse {
 						"required": []string{"id", "latitude", "longitude"},
 					},
 				},
+				{
+					"name":        "get_media",
+					"description": "Retrieve media content (e.g. book or score) by media ID with optional offset and length.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":     map[string]any{"type": "integer", "description": "Internal media ID."},
+							"offset": map[string]any{"type": "integer", "description": "Optional starting byte offset."},
+							"length": map[string]any{"type": "integer", "description": "Optional byte length to read."},
+						},
+						"required": []string{"id"},
+					},
+				},
 			},
 		}
 	case "tools/call":
@@ -425,6 +438,27 @@ func executeMCPTool(name string, args map[string]any) map[string]any {
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "Feature not found"}}}
 		}
 		data, _ := json.MarshalIndent(feat, "", "  ")
+		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
+
+	case "get_media":
+		var id int
+		if f, ok := args["id"].(float64); ok {
+			id = int(f)
+		} else if s, ok := args["id"].(string); ok {
+			id, _ = strconv.Atoi(s)
+		}
+		var offset int64
+		if f, ok := args["offset"].(float64); ok {
+			offset = int64(f)
+		}
+		var length int64
+		if f, ok := args["length"].(float64); ok {
+			length = int64(f)
+		}
+		data, _, _, err := db.MediaGet(id, offset, length)
+		if err != nil {
+			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
+		}
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
 	}
 	return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": "Tool not found"}}}

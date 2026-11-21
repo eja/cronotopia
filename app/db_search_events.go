@@ -89,6 +89,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 					DateEnd:     info.DateEnd,
 					Times:       info.Times,
 					Places:      info.Places,
+					Media:       info.Media,
 				})
 				return nil
 			},
@@ -192,6 +193,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 					DateEnd:     info.DateEnd,
 					Times:       info.Times,
 					Places:      info.Places,
+					Media:       info.Media,
 				})
 				return nil
 			},
@@ -321,6 +323,7 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 					DateEnd:     info.DateEnd,
 					Times:       info.Times,
 					Places:      info.Places,
+					Media:       info.Media,
 				})
 				return nil
 			},

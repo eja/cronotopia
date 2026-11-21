@@ -59,6 +59,7 @@ type EventResult struct {
 	DateEnd     string       `json:"date_end,omitempty"`
 	Times       []EventTime  `json:"times,omitempty"`
 	Places      []EventPlace `json:"places,omitempty"`
+	Media       []MediaItem  `json:"media,omitempty"`
 }
 
 type SearchResult struct {
@@ -77,6 +78,7 @@ type SearchResult struct {
 	DateEnd   string       `json:"date_end,omitempty"`
 	Times     []EventTime  `json:"times,omitempty"`
 	Places    []EventPlace `json:"places,omitempty"`
+	Media     []MediaItem  `json:"media,omitempty"`
 }
 
 type EntityInfo struct {
@@ -90,6 +92,16 @@ type EntityInfo struct {
 	YearEnd   int
 	Times     []EventTime
 	Places    []EventPlace
+	Media     []MediaItem
+}
+
+type MediaItem struct {
+	ID       int    `json:"id"`
+	Author   string `json:"author,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Language string `json:"language,omitempty"`
+	Length   int64  `json:"length"`
+	Mode     string `json:"mode,omitempty"`
 }
 
 func getJulianDayBounds(year, month, day int) (int64, int64) {
@@ -233,6 +245,28 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 		if info.Code == 0 {
 			info.Code = first.code
 		}
+	}
+
+	if hasTable(conn, "media") {
+		_ = sqlitex.Execute(conn, `
+			SELECT id, COALESCE(author, ''), COALESCE(title, ''), COALESCE(language, ''), LENGTH(content), COALESCE(mode, '')
+			FROM media
+			WHERE entity_id = ? OR entity_author_id = ?
+			ORDER BY id ASC
+		`, &sqlitex.ExecOptions{
+			Args: []any{entityID, entityID},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				info.Media = append(info.Media, MediaItem{
+					ID:       int(stmt.ColumnInt64(0)),
+					Author:   stmt.ColumnText(1),
+					Title:    stmt.ColumnText(2),
+					Language: stmt.ColumnText(3),
+					Length:   stmt.ColumnInt64(4),
+					Mode:     stmt.ColumnText(5),
+				})
+				return nil
+			},
+		})
 	}
 
 	return info

@@ -20,6 +20,7 @@ type ArticleResult struct {
 	Year      int                    `json:"year,omitempty"`
 	DateBegin string                 `json:"date_begin,omitempty"`
 	DateEnd   string                 `json:"date_end,omitempty"`
+	Media     []MediaItem            `json:"media,omitempty"`
 }
 
 type ArticleResultSection struct {
@@ -88,6 +89,7 @@ func (h *DBHandler) ArticleGetByEntity(entityID int) (ArticleResult, error) {
 	res.Year = info.YearBegin
 	res.DateBegin = info.DateBegin
 	res.DateEnd = info.DateEnd
+	res.Media = info.Media
 
 	return res, nil
 }
