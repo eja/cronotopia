@@ -93,7 +93,7 @@ async function openScore(mediaId, title) {
     const playBtn = document.getElementById('btn-score-play-pause');
 
     titleEl.textContent = title || 'Score';
-    playBtn.innerHTML = '&#9654; Play';
+    playBtn.innerHTML = '<i class="bi bi-play-fill"></i> Play';
     container.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>';
     setScoreModalVisible(true);
 
@@ -131,9 +131,9 @@ async function openScore(mediaId, title) {
 
         atApi.playerStateChanged.on(e => {
             if (e.state === 1) {
-                playBtn.innerHTML = '&#9208; Pause';
+                playBtn.innerHTML = '<i class="bi bi-pause-fill"></i> Pause';
             } else {
-                playBtn.innerHTML = '&#9654; Play';
+                playBtn.innerHTML = '<i class="bi bi-play-fill"></i> Play';
             }
         });
 

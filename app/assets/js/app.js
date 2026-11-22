@@ -185,7 +185,7 @@ function renderResults(items) {
         let timeBtnHtml = '';
         let timePopupHtml = '';
         if (times.length > 0) {
-            timeBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-time-toggle" data-target="time-box-${idx}">Time</button>`;
+            timeBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-time-toggle" data-target="time-box-${idx}"><i class="bi bi-clock me-1"></i>Time</button>`;
             let timeItemsHtml = '';
             times.forEach(t => {
                 const prop = PROPERTIES[t.code] || `Event P${t.code}`;
@@ -212,7 +212,7 @@ function renderResults(items) {
         let spaceBtnHtml = '';
         let spacePopupHtml = '';
         if (places.length > 0) {
-            spaceBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-space-toggle" data-target="space-box-${idx}">Space</button>`;
+            spaceBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-space-toggle" data-target="space-box-${idx}"><i class="bi bi-geo-alt me-1"></i>Space</button>`;
             let spaceItemsHtml = '';
             places.forEach(p => {
                 const prop = PROPERTIES[p.code] || `Place P${p.code}`;
@@ -240,37 +240,50 @@ function renderResults(items) {
             mediaByMode[mode].push(m);
         });
 
-        let mediaBtnsHtml = '';
-        let mediaPopupsHtml = '';
-        Object.keys(mediaByMode).forEach(mode => {
-            const list = mediaByMode[mode];
-            const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
-            const targetId = `media-box-${mode}-${idx}`;
-            mediaBtnsHtml += `<button type="button" class="btn btn-sm btn-panel-toggle btn-media-toggle" data-target="${targetId}">${modeLabel}</button>`;
+        let mediaBtnHtml = '';
+        let mediaPopupHtml = '';
+        const modeKeys = Object.keys(mediaByMode).sort();
+        if (modeKeys.length > 0) {
+            const targetId = `media-box-${idx}`;
+            mediaBtnHtml = `<button type="button" class="btn btn-sm btn-panel-toggle btn-media-toggle" data-target="${targetId}"><i class="bi bi-folder me-1"></i>Media</button>`;
 
-            let mediaItemsHtml = '';
-            list.forEach(m => {
-                const title = m.title || 'Untitled';
-                const safeTitle = title.replace(/"/g, '&quot;');
-                const langBadge = m.language ? `<span class="badge bg-info text-uppercase me-1">${m.language}</span>` : '';
-                mediaItemsHtml += `
-                    <li class="events-list-item">
-                        <button type="button" class="btn-title-link" data-id="${m.id}" data-mode="${m.mode}" data-length="${m.length || 0}" data-title="${safeTitle}">
-                            ${title}
+            let modesListHtml = '';
+            modeKeys.forEach(mode => {
+                const list = mediaByMode[mode];
+                const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
+                let itemsHtml = '';
+                list.forEach(m => {
+                    const title = m.title || 'Untitled';
+                    const safeTitle = title.replace(/"/g, '&quot;');
+                    const langBadge = m.language ? `<span class="badge bg-secondary text-uppercase flex-shrink-0 ms-2">${m.language}</span>` : '';
+                    itemsHtml += `
+                        <button type="button" class="list-group-item list-group-item-action btn-title-link d-flex justify-content-between align-items-center py-1 px-2 text-start" data-id="${m.id}" data-mode="${m.mode}" data-length="${m.length || 0}" data-title="${safeTitle}">
+                            <span class="text-truncate me-2 small">${title}</span>
+                            ${langBadge}
                         </button>
-                        ${langBadge}
+                    `;
+                });
+                modesListHtml += `
+                    <li class="mb-2">
+                        <div class="fw-semibold text-muted small text-capitalize mb-1">${modeLabel}</div>
+                        <div class="list-group">
+                            ${itemsHtml}
+                        </div>
                     </li>
                 `;
             });
-            mediaPopupsHtml += `
+
+            mediaPopupHtml = `
                 <div id="${targetId}" class="dropdown-popup-box media-dropdown-box mt-2" style="display: none;">
-                    <ol class="events-list mb-0 ps-3">${mediaItemsHtml}</ol>
+                    <ul class="mb-0 ps-3">
+                        ${modesListHtml}
+                    </ul>
                 </div>
             `;
-        });
+        }
 
         const canRead = (itemType !== 'E' && itemType !== 'T') || Boolean(item.article_id);
-        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;">Article</button>` : '';
+        const readBtnHtml = canRead ? `<button class="btn btn-sm btn-outline-primary py-0 px-2 btn-read" style="font-size: 0.78rem;"><i class="bi bi-book me-1"></i>Article</button>` : '';
 
         card.innerHTML = `
             <div class="d-flex justify-content-between align-items-start mb-1">
@@ -284,13 +297,13 @@ function renderResults(items) {
                 <div class="d-flex align-items-center flex-wrap gap-1">
                     ${timeBtnHtml}
                     ${spaceBtnHtml}
-                    ${mediaBtnsHtml}
+                    ${mediaBtnHtml}
                 </div>
                 ${readBtnHtml}
             </div>
             ${timePopupHtml}
             ${spacePopupHtml}
-            ${mediaPopupsHtml}
+            ${mediaPopupHtml}
         `;
 
         card.addEventListener('click', (ev) => {
@@ -472,7 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const sidebar = document.getElementById('sidebar');
         isMobileMap = !isMobileMap;
         sidebar.classList.toggle('mobile-hidden', isMobileMap);
-        mobileBtn.textContent = isMobileMap ? 'List' : 'Map';
+        mobileBtn.innerHTML = isMobileMap ? '<i class="bi bi-list-ul"></i> List' : '<i class="bi bi-map"></i> Map';
         if (isMobileMap && map) map.resize();
     });
 });
