@@ -184,8 +184,7 @@ body, html {
 }
 
 .btn-time-link,
-.btn-coord-link,
-.btn-title-link {
+.btn-coord-link {
     background: #ffffff;
     border: 1px solid #dee2e6;
     border-radius: 3px;
@@ -202,10 +201,15 @@ body, html {
 }
 
 .btn-time-link:hover,
-.btn-coord-link:hover,
-.btn-title-link:hover {
+.btn-coord-link:hover {
     background: #e7f1ff;
     border-color: #9ec5fe;
+}
+
+.media-dropdown-box .list-group-item {
+    font-size: 0.76rem;
+    cursor: pointer;
+    line-height: 1.25;
 }
 
 .marker-wrapper {
@@ -285,6 +289,30 @@ body, html {
     display: none;
 }
 
+.at-cursor-bar {
+    background: rgba(255, 242, 0, 0.25) !important;
+}
+
+.at-selection div {
+    background: rgba(64, 64, 255, 0.1) !important;
+}
+
+.at-cursor-beat {
+    background: rgba(64, 64, 255, 0.75) !important;
+    width: 3px !important;
+}
+
+.at-highlight * {
+    fill: #0078ff !important;
+    stroke: #0078ff !important;
+}
+
+@font-face {
+  font-family: "bootstrap-icons";
+  font-display: block;
+  src: url("/fonts/bootstrap-icons.woff2") format("woff2");
+}
+
 @media (max-width: 768px) {
     #sidebar {
         position: absolute;
@@ -303,20 +331,4 @@ body, html {
     }
 }
 
-.at-cursor-bar {
-    background: rgba(255, 242, 0, 0.25) !important;
-}
 
-.at-selection div {
-    background: rgba(64, 64, 255, 0.1) !important;
-}
-
-.at-cursor-beat {
-    background: rgba(64, 64, 255, 0.75) !important;
-    width: 3px !important;
-}
-
-.at-highlight * {
-    fill: #0078ff !important;
-    stroke: #0078ff !important;
-}
