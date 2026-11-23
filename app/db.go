@@ -31,6 +31,7 @@ type DBHandler struct {
 	zstdDec        *zstd.Decoder
 	seekableReader io.Closer
 	fsHandle       io.Closer
+	attached       []*attachedTarget
 }
 
 type lockedReaderAt struct {
@@ -107,7 +108,7 @@ func hasTable(conn *sqlite.Conn, name string) bool {
 	}
 
 	var exists bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ? LIMIT 1", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE name = ? LIMIT 1", &sqlitex.ExecOptions{
 		Args: []any{name},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			exists = true
@@ -183,6 +184,14 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		isZst:      isZst,
 	}
 
+	if err := handler.initAttachedDatabases(); err != nil {
+		if f != nil && !strings.HasPrefix(dbPath, "/proc/self/fd") {
+			f.Close()
+		}
+		_ = handler.Close()
+		return nil, err
+	}
+
 	openPath := dbPath
 
 	if isReadOnly {
@@ -191,6 +200,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			if !strings.HasPrefix(dbPath, "/proc/self/fd") {
 				f.Close()
 			}
+			_ = handler.Close()
 			return nil, fmt.Errorf("database file stat failed: %w", err)
 		}
 
@@ -201,6 +211,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
 			if err != nil {
 				f.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("failed to initialize zstd decoder: %w", err)
 			}
 			handler.zstdDec = dec
@@ -213,6 +224,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			if err != nil {
 				dec.Close()
 				f.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("failed to create seekable reader: %w", err)
 			}
 			handler.seekableReader = sReader
@@ -222,12 +234,14 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				sReader.Close()
 				dec.Close()
 				f.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("failed to read compressed file size: %w", err)
 			}
 			if _, err := sReader.Seek(0, io.SeekStart); err != nil {
 				sReader.Close()
 				dec.Close()
 				f.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("failed to seek start: %w", err)
 			}
 
@@ -236,6 +250,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				sReader.Close()
 				dec.Close()
 				f.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("failed to register VFS reader: %w", err)
 			}
 			handler.fsHandle = fsHandle
@@ -247,6 +262,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			vfsName, fsHandle, err := vfs.New(&readerFS{r: &lockedReaderAt{r: f}, size: stat.Size()})
 			if err != nil {
 				f.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("failed to register VFS reader: %w", err)
 			}
 			handler.fsHandle = fsHandle
@@ -271,6 +287,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		}
 		initConn, err := sqlite.OpenConn(dbPath, sqlite.OpenReadWrite|sqlite.OpenCreate)
 		if err != nil {
+			_ = handler.Close()
 			return nil, fmt.Errorf("cannot open sqlite database for initialization: %w", err)
 		}
 
@@ -290,6 +307,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		for _, s := range coreSQLs {
 			if err := sqlitex.ExecuteTransient(initConn, s, nil); err != nil {
 				initConn.Close()
+				_ = handler.Close()
 				return nil, fmt.Errorf("error initializing database: %w", err)
 			}
 		}
@@ -302,6 +320,10 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 	opts := sqlitex.PoolOptions{
 		PoolSize: 16,
 		PrepareConn: func(conn *sqlite.Conn) error {
+			if err := handler.attachDatabases(conn); err != nil {
+				return err
+			}
+
 			pragmas := []string{
 				"PRAGMA temp_store = MEMORY;",
 				"PRAGMA cache_size = -100000;",
@@ -335,6 +357,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 
 	pool, err := sqlitex.NewPool(openPath, opts)
 	if err != nil {
+		_ = handler.Close()
 		return nil, fmt.Errorf("failed to open database pool: %w", err)
 	}
 	handler.pool = pool
@@ -354,7 +377,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		options.aiModelPrefixSave = prefixSave
 	}
 
-	log.Printf("DB opened: %s (readonly=%v, zstd=%v)", dbPath, isReadOnly, isZst)
+	log.Printf("DB opened: %s (readonly=%v, zstd=%v, attached=%d)", dbPath, isReadOnly, isZst, len(handler.attached))
 	return handler, nil
 }
 
@@ -363,6 +386,26 @@ func (h *DBHandler) Close() error {
 	if h.pool != nil {
 		if err := h.pool.Close(); err != nil && firstErr == nil {
 			firstErr = err
+		}
+	}
+	for _, att := range h.attached {
+		if att.fsHandle != nil {
+			if err := att.fsHandle.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if att.seekableReader != nil {
+			if err := att.seekableReader.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if att.zstdDec != nil {
+			att.zstdDec.Close()
+		}
+		if att.zstFile != nil {
+			if err := att.zstFile.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 	if h.fsHandle != nil {

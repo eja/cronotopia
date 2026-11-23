@@ -8,6 +8,11 @@ import (
 
 type Config struct {
 	dbPath              string
+	dbCorpus            string
+	dbAi                string
+	dbMap               string
+	dbElevation         string
+	dbMedia             string
 	dbShell             bool
 	compress            bool
 	decompress          bool

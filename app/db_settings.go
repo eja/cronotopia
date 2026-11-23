@@ -17,7 +17,7 @@ func (h *DBHandler) SettingPut(key, value string) error {
 	}
 	defer h.pool.Put(conn)
 
-	return sqlitex.Execute(conn, "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", &sqlitex.ExecOptions{
+	return sqlitex.Execute(conn, "INSERT OR REPLACE INTO main.settings (key, value) VALUES (?, ?)", &sqlitex.ExecOptions{
 		Args: []any{key, value},
 	})
 }

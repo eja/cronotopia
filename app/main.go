@@ -16,7 +16,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.21"
+	Version = "8.11.23"
 )
 
 var (
@@ -29,9 +29,14 @@ func main() {
 	options = &Config{}
 
 	flag.StringVar(&options.dbPath, "db", "cronotopia.db", "SQLite database path")
-	flag.BoolVar(&options.dbShell, "dbShell", false, "Start interactive SQLite shell")
-	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd (.zst)")
-	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd (.zst)")
+	flag.StringVar(&options.dbCorpus, "db-corpus", "", "Corpus SQLite database path")
+	flag.StringVar(&options.dbAi, "db-ai", "", "AI model SQLite database path")
+	flag.StringVar(&options.dbMap, "db-map", "", "Map tiles SQLite database path")
+	flag.StringVar(&options.dbElevation, "db-elevation", "", "Elevation SQLite database path")
+	flag.StringVar(&options.dbMedia, "db-media", "", "Media SQLite database path")
+	flag.BoolVar(&options.dbShell, "db-shell", false, "Start interactive SQLite shell")
+	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd")
+	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd")
 	flag.StringVar(&options.wikidataImport, "import-wikidata", "", "Wikidata dump URL or file (.json, .gz, .bz2)")
 	flag.StringVar(&options.wikipediaImport, "import-wikipedia", "", "Wikipedia Enterprise HTML dump URL or tar.gz file")
 	flag.StringVar(&options.wikiliteImport, "import-wikilite", "", "Import pre-indexed Wikilite SQLite database")
@@ -46,7 +51,7 @@ func main() {
 	flag.IntVar(&options.aiAnnSize, "ai-ann-size", 64, "MRL Matryoshka dimensionality")
 	flag.BoolVar(&options.aiApi, "ai-api", false, "Use HTTP API for embeddings")
 	flag.StringVar(&options.aiApiKey, "ai-api-key", "", "API Key for AI provider")
-	flag.StringVar(&options.aiApiUrl, "ai-api-url", "http://localhost:8080/v1/embeddings", "AI API URL")
+	flag.StringVar(&options.aiApiUrl, "ai-api-url", "http://localhost:9931/v1/embeddings", "AI API URL")
 	flag.StringVar(&options.aiModel, "ai-model", "Qwen3-Embedding-0.6B-Q8_0", "Model identifier")
 	flag.StringVar(&options.aiModelPrefixSave, "ai-model-prefix-save", "", "Prefix for passage embeddings")
 	flag.StringVar(&options.aiModelPrefixSearch, "ai-model-prefix-search", "Instruct: Retrieve relevant passages\nQuery: ", "Prefix for query embeddings")

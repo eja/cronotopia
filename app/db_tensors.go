@@ -28,14 +28,7 @@ func (h *DBHandler) AiHasModel() bool {
 	}
 	defer h.pool.Put(conn)
 
-	var found bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM tensors LIMIT 1", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			found = true
-			return nil
-		},
-	})
-	return found
+	return hasTable(conn, "tensors")
 }
 
 func (h *DBHandler) AiClearModel() error {
@@ -64,7 +57,15 @@ func (h *DBHandler) AiGetTensorBlob(rowID int64, offset int64, dest []byte) erro
 	}
 	defer h.pool.Put(conn)
 
-	blob, err := conn.OpenBlob("", "tensors", "data", rowID, false)
+	schema := "main"
+	_ = sqlitex.Execute(conn, "SELECT schema FROM pragma_table_list WHERE name = 'tensors' LIMIT 1", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			schema = stmt.ColumnText(0)
+			return nil
+		},
+	})
+
+	blob, err := conn.OpenBlob(schema, "tensors", "data", rowID, false)
 	if err != nil {
 		return fmt.Errorf("failed to open tensor blob (row %d): %w", rowID, err)
 	}

@@ -40,7 +40,7 @@ async function openArticle(entityId, articleId) {
     const bodyEl = document.getElementById('articleModalBody');
     const paginationEl = document.getElementById('articleModalPagination');
 
-    paginationEl.style.display = 'none';
+    paginationEl.style.setProperty('display', 'none', 'important');
     if (typeof currentBook !== 'undefined') currentBook = null;
 
     titleEl.textContent = 'Loading article...';
