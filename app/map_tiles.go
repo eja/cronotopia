@@ -29,9 +29,14 @@ func (h *DBHandler) GetTileData(z, x, y int) ([]byte, error) {
 	}
 	defer h.pool.Put(conn)
 
+	table := "tiles"
+	if hasSchemaTable(conn, "map_db", "tiles") {
+		table = "map_db.tiles"
+	}
+
 	yTms := (1 << z) - 1 - y
 	var tileData []byte
-	err := sqlitex.Execute(conn, "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?", &sqlitex.ExecOptions{
+	err := sqlitex.Execute(conn, fmt.Sprintf("SELECT tile_data FROM %s WHERE zoom_level=? AND tile_column=? AND tile_row=?", table), &sqlitex.ExecOptions{
 		Args: []any{z, x, yTms},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			tileData = make([]byte, stmt.ColumnLen(0))
@@ -53,9 +58,14 @@ func (h *DBHandler) GetElevationTileData(z, x, y int) ([]byte, error) {
 	}
 	defer h.pool.Put(conn)
 
+	table := "elevations"
+	if hasSchemaTable(conn, "elevation_db", "elevations") {
+		table = "elevation_db.elevations"
+	}
+
 	yTms := (1 << z) - 1 - y
 	var tileData []byte
-	err := sqlitex.Execute(conn, "SELECT tile_data FROM elevations WHERE zoom_level=? AND tile_column=? AND tile_row=?", &sqlitex.ExecOptions{
+	err := sqlitex.Execute(conn, fmt.Sprintf("SELECT tile_data FROM %s WHERE zoom_level=? AND tile_column=? AND tile_row=?", table), &sqlitex.ExecOptions{
 		Args: []any{z, x, yTms},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			tileData = make([]byte, stmt.ColumnLen(0))

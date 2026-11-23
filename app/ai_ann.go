@@ -31,7 +31,8 @@ func (h *DBHandler) AiHasANN() bool {
 	}
 	defer h.pool.Put(conn)
 
-	return hasTable(conn, "vectors_ann_index")
+	schema := tableSchema(conn, "vectors_ann_index")
+	return hasSchemaTable(conn, schema, "vectors_ann_index")
 }
 
 func (h *DBHandler) ProcessEmbeddings() error {
@@ -291,13 +292,17 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 	copy(mrlQuery, vectors[:size])
 	l2Norm(mrlQuery)
 
+	centSchema := tableSchema(conn, "vectors_ann_centroids")
+	chunkSchema := tableSchema(conn, "vectors_ann_chunks")
+	linkSchema := tableSchema(conn, "vectors_ann_centroid_chunks")
+
 	type centroidDist struct {
 		id   int
 		dist float32
 	}
 	var cDists []centroidDist
 
-	_ = sqlitex.Execute(conn, "SELECT id, centroid FROM vectors_ann_centroids", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT id, centroid FROM %s.vectors_ann_centroids", centSchema), &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			cLen := stmt.ColumnLen(1)
 			cBytes := make([]byte, cLen)
@@ -326,7 +331,7 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 
 	var selectedChunks []string
 	for i := 0; i < len(cDists) && i < 3; i++ {
-		_ = sqlitex.Execute(conn, "SELECT chunk_id FROM vectors_ann_centroid_chunks WHERE centroid_id = ?", &sqlitex.ExecOptions{
+		_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT chunk_id FROM %s.vectors_ann_centroid_chunks WHERE centroid_id = ?", linkSchema), &sqlitex.ExecOptions{
 			Args: []any{cDists[i].id},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				selectedChunks = append(selectedChunks, strconv.FormatInt(stmt.ColumnInt64(0), 10))
@@ -340,7 +345,7 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 	}
 
 	chunkSize := size * 4
-	queryStr := "SELECT id, chunk FROM vectors_ann_chunks WHERE id IN (" + strings.Join(selectedChunks, ",") + ")"
+	queryStr := fmt.Sprintf("SELECT id, chunk FROM %s.vectors_ann_chunks WHERE id IN ("+strings.Join(selectedChunks, ",")+")", chunkSchema)
 	var annResults []VectorDistance
 
 	_ = sqlitex.Execute(conn, queryStr, &sqlitex.ExecOptions{

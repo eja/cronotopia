@@ -23,10 +23,15 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 	hasSpace := p.HasSpace || (p.Lat != 0 || p.Lon != 0)
 	hasTime := p.HasTime || (p.Year != 0 || p.Month != 0 || p.Day != 0)
 
-	if hasSpace && !hasTable(conn, "entity_places_rtree") {
+	rtreeSchema := tableSchema(conn, "entity_places_rtree")
+	placeSchema := tableSchema(conn, "entity_places")
+	timeSchema := tableSchema(conn, "entity_times")
+	entSchema := tableSchema(conn, "entities")
+
+	if hasSpace && !hasSchemaTable(conn, rtreeSchema, "entity_places_rtree") {
 		hasSpace = false
 	}
-	if hasTime && !hasTable(conn, "entity_times") {
+	if hasTime && !hasSchemaTable(conn, timeSchema, "entity_times") {
 		hasTime = false
 	}
 
@@ -47,19 +52,19 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 
 	if hasSpace && !hasTime {
 		minLat, maxLat, minLon, maxLon := MapBoundingBox(p.Lat, p.Lon, p.RadiusKm)
-		sqlQuery := `
+		sqlQuery := fmt.Sprintf(`
 			SELECT 
 				p.entity_id, p.prop_code, 
 				p.latitude, p.longitude, 
 				COALESCE(e.title, 'T' || p.entity_id) as label,
 				COALESCE(e.description, '') as description,
 				COALESCE(e.article_id, 0)
-			FROM entity_places_rtree r
-			JOIN entity_places p ON r.id = p.id
-			LEFT JOIN entities e ON p.entity_id = e.id
+			FROM %s.entity_places_rtree r
+			JOIN %s.entity_places p ON r.id = p.id
+			LEFT JOIN %s.entities e ON p.entity_id = e.id
 			WHERE r.max_lat >= ? AND r.min_lat <= ? AND r.max_lon >= ? AND r.min_lon <= ?
 			LIMIT ?
-		`
+		`, rtreeSchema, placeSchema, entSchema)
 		err := sqlitex.Execute(conn, sqlQuery, &sqlitex.ExecOptions{
 			Args: []any{minLat, maxLat, minLon, maxLon, p.Limit * 8},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -147,12 +152,12 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 				COALESCE(e.title, 'T' || t.entity_id) as label,
 				COALESCE(e.description, '') as description,
 				COALESCE(e.article_id, 0)
-			FROM entity_times t
-			LEFT JOIN entities e ON t.entity_id = e.id
+			FROM %s.entity_times t
+			LEFT JOIN %s.entities e ON t.entity_id = e.id
 			WHERE %s
 			ORDER BY %s
 			LIMIT ?
-		`, strings.Join(whereClauses, " AND "), orderSQL)
+		`, timeSchema, entSchema, strings.Join(whereClauses, " AND "), orderSQL)
 
 		var finalArgs []any
 		finalArgs = append(finalArgs, args...)
@@ -268,14 +273,14 @@ func (h *DBHandler) SearchEvents(p SearchParams) ([]EventResult, error) {
 				COALESCE(e.title, 'T' || t.entity_id) as label,
 				COALESCE(e.description, '') as description,
 				COALESCE(e.article_id, 0)
-			FROM entity_places_rtree r
-			JOIN entity_places p ON r.id = p.id
-			JOIN entity_times t ON p.entity_id = t.entity_id
-			LEFT JOIN entities e ON t.entity_id = e.id
+			FROM %s.entity_places_rtree r
+			JOIN %s.entity_places p ON r.id = p.id
+			JOIN %s.entity_times t ON p.entity_id = t.entity_id
+			LEFT JOIN %s.entities e ON t.entity_id = e.id
 			WHERE %s
 			ORDER BY %s
 			LIMIT ?
-		`, whereSQL, orderSQL)
+		`, rtreeSchema, placeSchema, timeSchema, entSchema, whereSQL, orderSQL)
 
 		finalArgs := []any{minLat, maxLat, minLon, maxLon}
 		finalArgs = append(finalArgs, timeArgs...)

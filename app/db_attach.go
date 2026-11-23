@@ -13,7 +13,6 @@ import (
 	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
 	"github.com/SaveTheRbtz/zstd-seekable-format-go/pkg/framecache"
 	"github.com/klauspost/compress/zstd"
-	"modernc.org/sqlite/vfs"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -26,7 +25,6 @@ type attachedTarget struct {
 	zstFile        *os.File
 	zstdDec        *zstd.Decoder
 	seekableReader io.Closer
-	fsHandle       io.Closer
 }
 
 func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
@@ -84,15 +82,9 @@ func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
 			return nil, fmt.Errorf("failed to seek start of %s: %w", schema, err)
 		}
 
-		vfsName, fsHandle, err := vfs.New(&readerFS{r: &lockedReaderAt{r: sReader}, size: uncompressedSize})
-		if err != nil {
-			sReader.Close()
-			dec.Close()
-			f.Close()
-			return nil, fmt.Errorf("failed to register VFS for %s: %w", schema, err)
-		}
-		target.fsHandle = fsHandle
-		target.uri = fmt.Sprintf("file:db?vfs=%s&mode=ro&immutable=1", vfsName)
+		virtualName := fmt.Sprintf("%s.sqlite", schema)
+		globalVFSRouter.Register(virtualName, &lockedReaderAt{r: sReader}, uncompressedSize)
+		target.uri = fmt.Sprintf("file:%s?mode=ro&immutable=1", virtualName)
 	} else if isSQLiteHeader(header) {
 		f.Close()
 		cleanPath := filepath.ToSlash(filePath)
@@ -150,29 +142,6 @@ func (h *DBHandler) attachDatabases(conn *sqlite.Conn) error {
 			return fmt.Errorf("failed to attach database %s: %w", target.schema, err)
 		}
 	}
-
-	var settingsBranches []string
-	settingsBranches = append(settingsBranches, "SELECT key, value, 1 AS priority FROM main.settings")
-	prio := 2
-	for _, target := range h.attached {
-		if hasSchemaTable(conn, target.schema, "settings") {
-			settingsBranches = append(settingsBranches, fmt.Sprintf("SELECT key, value, %d AS priority FROM %s.settings", prio, target.schema))
-			prio++
-		}
-	}
-
-	if len(settingsBranches) > 1 {
-		viewSQL := fmt.Sprintf(`CREATE TEMP VIEW IF NOT EXISTS settings AS
-			SELECT key, value FROM (
-				SELECT key, value, MIN(priority) FROM (
-					%s
-				) GROUP BY key
-			);`, strings.Join(settingsBranches, " UNION ALL "))
-		if err := sqlitex.ExecuteTransient(conn, viewSQL, nil); err != nil {
-			return fmt.Errorf("failed to create unified settings view: %w", err)
-		}
-	}
-
 	return nil
 }
 

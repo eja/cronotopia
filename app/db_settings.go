@@ -29,21 +29,30 @@ func (h *DBHandler) SettingGet(key string) (string, error) {
 	}
 	defer h.pool.Put(conn)
 
-	var val string
-	var found bool
-	err := sqlitex.Execute(conn, "SELECT value FROM settings WHERE key = ? LIMIT 1", &sqlitex.ExecOptions{
-		Args: []any{key},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			val = stmt.ColumnText(0)
-			found = true
-			return nil
-		},
-	})
-	if err != nil {
-		return "", err
+	schemas := []string{"main"}
+	for _, target := range h.attached {
+		schemas = append(schemas, target.schema)
 	}
-	if !found {
-		return "", fmt.Errorf("key %q not found", key)
+
+	for _, schema := range schemas {
+		if !hasSchemaTable(conn, schema, "settings") {
+			continue
+		}
+		var val string
+		var found bool
+		query := fmt.Sprintf("SELECT value FROM %s.settings WHERE key = ? LIMIT 1", schema)
+		err := sqlitex.Execute(conn, query, &sqlitex.ExecOptions{
+			Args: []any{key},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				val = stmt.ColumnText(0)
+				found = true
+				return nil
+			},
+		})
+		if err == nil && found {
+			return val, nil
+		}
 	}
-	return val, nil
+
+	return "", fmt.Errorf("key %q not found", key)
 }

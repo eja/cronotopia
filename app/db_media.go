@@ -17,11 +17,13 @@ func (h *DBHandler) MediaGet(id int, offset, length int64) ([]byte, int64, strin
 	}
 	defer h.pool.Put(conn)
 
+	schema := tableSchema(conn, "media")
+
 	var totalLen int64
 	var mode string
 	var found bool
 
-	err := sqlitex.Execute(conn, "SELECT LENGTH(content), COALESCE(mode, '') FROM media WHERE id = ? LIMIT 1", &sqlitex.ExecOptions{
+	err := sqlitex.Execute(conn, fmt.Sprintf("SELECT LENGTH(content), COALESCE(mode, '') FROM %s.media WHERE id = ? LIMIT 1", schema), &sqlitex.ExecOptions{
 		Args: []any{id},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			totalLen = stmt.ColumnInt64(0)
@@ -49,7 +51,7 @@ func (h *DBHandler) MediaGet(id int, offset, length int64) ([]byte, int64, strin
 	}
 
 	var data []byte
-	err = sqlitex.Execute(conn, "SELECT SUBSTR(content, ?, ?) FROM media WHERE id = ? LIMIT 1", &sqlitex.ExecOptions{
+	err = sqlitex.Execute(conn, fmt.Sprintf("SELECT SUBSTR(content, ?, ?) FROM %s.media WHERE id = ? LIMIT 1", schema), &sqlitex.ExecOptions{
 		Args: []any{offset + 1, length, id},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			data = make([]byte, stmt.ColumnLen(0))

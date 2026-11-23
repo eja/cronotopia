@@ -30,7 +30,6 @@ type DBHandler struct {
 	zstFile        *os.File
 	zstdDec        *zstd.Decoder
 	seekableReader io.Closer
-	fsHandle       io.Closer
 	attached       []*attachedTarget
 }
 
@@ -45,20 +44,66 @@ func (l *lockedReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return l.r.ReadAt(p, off)
 }
 
-type readerFS struct {
+type vfsRouter struct {
+	mu    sync.RWMutex
+	files map[string]*vfsFileEntry
+}
+
+type vfsFileEntry struct {
 	r    io.ReaderAt
 	size int64
 }
 
-func (rfs *readerFS) Open(name string) (fs.File, error) {
+var (
+	globalVFSRouter = &vfsRouter{files: make(map[string]*vfsFileEntry)}
+	globalVFSName   string
+	globalVFSHandle io.Closer
+	registerVFSOnce sync.Once
+	registerVFSErr  error
+)
+
+func getOrInitGlobalVFS() (string, error) {
+	registerVFSOnce.Do(func() {
+		name, handle, err := vfs.New(globalVFSRouter)
+		if err != nil {
+			registerVFSErr = err
+			return
+		}
+		globalVFSName = name
+		globalVFSHandle = handle
+	})
+	return globalVFSName, registerVFSErr
+}
+
+func (vr *vfsRouter) Register(name string, r io.ReaderAt, size int64) {
+	vr.mu.Lock()
+	defer vr.mu.Unlock()
+	vr.files[name] = &vfsFileEntry{r: r, size: size}
+}
+
+func (vr *vfsRouter) Open(name string) (fs.File, error) {
 	clean := strings.TrimPrefix(filepath.ToSlash(name), "/")
-	if clean != "db" && filepath.Base(clean) != "db" {
-		return nil, fs.ErrNotExist
+	base := filepath.Base(clean)
+
+	vr.mu.RLock()
+	entry, ok := vr.files[clean]
+	if !ok {
+		entry, ok = vr.files[base]
 	}
-	return &readerFile{
-		SectionReader: io.NewSectionReader(rfs.r, 0, rfs.size),
-		size:          rfs.size,
-	}, nil
+	vr.mu.RUnlock()
+
+	if ok {
+		return &readerFile{
+			SectionReader: io.NewSectionReader(entry.r, 0, entry.size),
+			size:          entry.size,
+		}, nil
+	}
+
+	f, err := os.Open(name)
+	if err == nil {
+		return f, nil
+	}
+	return nil, fs.ErrNotExist
 }
 
 type readerFile struct {
@@ -106,16 +151,32 @@ func hasTable(conn *sqlite.Conn, name string) bool {
 	if conn == nil {
 		return false
 	}
+	schema := tableSchema(conn, name)
+	return hasSchemaTable(conn, schema, name)
+}
 
-	var exists bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE name = ? LIMIT 1", &sqlitex.ExecOptions{
-		Args: []any{name},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			exists = true
-			return nil
-		},
-	})
-	return exists
+func tableSchema(conn *sqlite.Conn, table string) string {
+	candidates := []string{"ai_db", "corpus_db", "map_db", "elevation_db", "media_db", "main"}
+	for _, s := range candidates {
+		if hasSchemaTable(conn, s, table) {
+			var hasRow bool
+			_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT 1 FROM %s.%s LIMIT 1", s, table), &sqlitex.ExecOptions{
+				ResultFunc: func(stmt *sqlite.Stmt) error {
+					hasRow = true
+					return nil
+				},
+			})
+			if hasRow {
+				return s
+			}
+		}
+	}
+	for _, s := range candidates {
+		if hasSchemaTable(conn, s, table) {
+			return s
+		}
+	}
+	return "main"
 }
 
 func NewDBHandler(dbPath string) (*DBHandler, error) {
@@ -192,6 +253,14 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		return nil, err
 	}
 
+	hasZstAttached := false
+	for _, att := range handler.attached {
+		if att.isZst {
+			hasZstAttached = true
+			break
+		}
+	}
+
 	openPath := dbPath
 
 	if isReadOnly {
@@ -202,6 +271,15 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 			}
 			_ = handler.Close()
 			return nil, fmt.Errorf("database file stat failed: %w", err)
+		}
+
+		vfsName, err := getOrInitGlobalVFS()
+		if err != nil {
+			if !strings.HasPrefix(dbPath, "/proc/self/fd") {
+				f.Close()
+			}
+			_ = handler.Close()
+			return nil, fmt.Errorf("failed to register VFS: %w", err)
 		}
 
 		if isZst {
@@ -245,39 +323,26 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 				return nil, fmt.Errorf("failed to seek start: %w", err)
 			}
 
-			vfsName, fsHandle, err := vfs.New(&readerFS{r: &lockedReaderAt{r: sReader}, size: uncompressedSize})
-			if err != nil {
-				sReader.Close()
-				dec.Close()
-				f.Close()
-				_ = handler.Close()
-				return nil, fmt.Errorf("failed to register VFS reader: %w", err)
-			}
-			handler.fsHandle = fsHandle
-
-			openPath = fmt.Sprintf("file:db?vfs=%s&mode=ro&immutable=1", vfsName)
+			globalVFSRouter.Register("main.db", &lockedReaderAt{r: sReader}, uncompressedSize)
+			openPath = fmt.Sprintf("file:main.db?vfs=%s&mode=ro&immutable=1", vfsName)
 		} else if strings.HasPrefix(dbPath, "/proc/self/fd") {
 			handler.zstFile = f
-
-			vfsName, fsHandle, err := vfs.New(&readerFS{r: &lockedReaderAt{r: f}, size: stat.Size()})
-			if err != nil {
-				f.Close()
-				_ = handler.Close()
-				return nil, fmt.Errorf("failed to register VFS reader: %w", err)
-			}
-			handler.fsHandle = fsHandle
-
-			openPath = fmt.Sprintf("file:db?vfs=%s&mode=ro&immutable=1", vfsName)
+			globalVFSRouter.Register("fd.db", &lockedReaderAt{r: f}, stat.Size())
+			openPath = fmt.Sprintf("file:fd.db?vfs=%s&mode=ro&immutable=1", vfsName)
 		} else {
 			f.Close()
 			cleanPath := filepath.ToSlash(dbPath)
-			if !strings.HasPrefix(cleanPath, "file:") {
-				openPath = fmt.Sprintf("file:%s?immutable=1", cleanPath)
-			} else if !strings.Contains(cleanPath, "immutable=") {
-				if strings.Contains(cleanPath, "?") {
-					openPath = cleanPath + "&immutable=1"
-				} else {
-					openPath = cleanPath + "?immutable=1"
+			if hasZstAttached {
+				openPath = fmt.Sprintf("file:%s?vfs=%s&mode=ro&immutable=1", cleanPath, vfsName)
+			} else {
+				if !strings.HasPrefix(cleanPath, "file:") {
+					openPath = fmt.Sprintf("file:%s?immutable=1", cleanPath)
+				} else if !strings.Contains(cleanPath, "immutable=") {
+					if strings.Contains(cleanPath, "?") {
+						openPath = cleanPath + "&immutable=1"
+					} else {
+						openPath = cleanPath + "?immutable=1"
+					}
 				}
 			}
 		}
@@ -315,7 +380,7 @@ func NewDBHandler(dbPath string) (*DBHandler, error) {
 		initConn.Close()
 	}
 
-	useCustomVFS := isZst || (isReadOnly && strings.HasPrefix(dbPath, "/proc/self/fd"))
+	useCustomVFS := isZst || (isReadOnly && strings.HasPrefix(dbPath, "/proc/self/fd")) || hasZstAttached
 
 	opts := sqlitex.PoolOptions{
 		PoolSize: 16,
@@ -389,11 +454,6 @@ func (h *DBHandler) Close() error {
 		}
 	}
 	for _, att := range h.attached {
-		if att.fsHandle != nil {
-			if err := att.fsHandle.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
 		if att.seekableReader != nil {
 			if err := att.seekableReader.Close(); err != nil && firstErr == nil {
 				firstErr = err
@@ -406,11 +466,6 @@ func (h *DBHandler) Close() error {
 			if err := att.zstFile.Close(); err != nil && firstErr == nil {
 				firstErr = err
 			}
-		}
-	}
-	if h.fsHandle != nil {
-		if err := h.fsHandle.Close(); err != nil && firstErr == nil {
-			firstErr = err
 		}
 	}
 	if h.seekableReader != nil {

@@ -23,9 +23,13 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 		return nil, nil
 	}
 
-	if !hasTable(conn, "section_search") {
+	ftsSchema := tableSchema(conn, "section_search")
+	if !hasSchemaTable(conn, ftsSchema, "section_search") {
 		return nil, nil
 	}
+
+	secSchema := tableSchema(conn, "sections")
+	entSchema := tableSchema(conn, "entities")
 
 	var p SearchParams
 	if len(searchParams) > 0 {
@@ -46,7 +50,7 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 		fetchLimit = MaxSearchCandidates
 	}
 
-	sqlQuery := `
+	sqlQuery := fmt.Sprintf(`
 		SELECT
 			s.entity_id,
 			COALESCE(e.title, s.title),
@@ -54,13 +58,13 @@ func (h *DBHandler) SearchLexical(searchQuery string, limit int, searchParams ..
 			s.content,
 			snippet(section_search, 1, '<mark>', '</mark>', '...', 32) as snippet,
 			bm25(section_search) as power
-		FROM section_search
-		JOIN sections s ON section_search.rowid = s.id
-		LEFT JOIN entities e ON s.entity_id = e.id
+		FROM %s.section_search
+		JOIN %s.sections s ON section_search.rowid = s.id
+		LEFT JOIN %s.entities e ON s.entity_id = e.id
 		WHERE section_search MATCH ?
 		ORDER BY power ASC
 		LIMIT ?
-	`
+	`, ftsSchema, secSchema, entSchema)
 
 	var results []SearchResult
 	seenEntity := make(map[int]bool)

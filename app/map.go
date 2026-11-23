@@ -3,15 +3,11 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-
-	"zombiezen.com/go/sqlite"
-	"zombiezen.com/go/sqlite/sqlitex"
 )
 
 type MapConfig struct {
@@ -361,39 +357,24 @@ func MapExtractFeatureByID(h *DBHandler, id string, minLon, minLat, maxLon, maxL
 }
 
 func (h *DBHandler) GetMapConfig() MapConfig {
-	conn := h.pool.Get(context.Background())
-	if conn == nil {
-		return MapConfig{Zoom: 1, MinZoom: 0, MaxZoom: 14}
-	}
-	defer h.pool.Put(conn)
-
 	config := MapConfig{Zoom: 1, MinZoom: 0, MaxZoom: 14}
-	_ = sqlitex.Execute(conn, `
-    SELECT 
-      MAX(CASE WHEN key = 'map_minzoom' THEN CAST(value AS INTEGER) END),
-      MAX(CASE WHEN key = 'map_maxzoom' THEN CAST(value AS INTEGER) END)
-    FROM settings
-  `, &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			config.MinZoom = int(stmt.ColumnInt64(0))
-			config.MaxZoom = int(stmt.ColumnInt64(1))
-			return nil
-		},
-	})
+
+	if val, err := h.SettingGet("map_minzoom"); err == nil && val != "" {
+		if n, err := strconv.Atoi(val); err == nil {
+			config.MinZoom = n
+		}
+	}
+	if val, err := h.SettingGet("map_maxzoom"); err == nil && val != "" {
+		if n, err := strconv.Atoi(val); err == nil {
+			config.MaxZoom = n
+		}
+	}
 	config.Zoom = float64(config.MinZoom)
 	if config.Zoom == 0 {
 		config.Zoom = 1
 	}
 
-	var centerStr string
-	_ = sqlitex.Execute(conn, "SELECT value FROM settings WHERE key = 'map_center'", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			centerStr = stmt.ColumnText(0)
-			return nil
-		},
-	})
-
-	if centerStr != "" {
+	if centerStr, err := h.SettingGet("map_center"); err == nil && centerStr != "" {
 		parts := strings.Split(centerStr, ",")
 		if len(parts) >= 2 {
 			config.CenterLng, _ = strconv.ParseFloat(parts[0], 64)

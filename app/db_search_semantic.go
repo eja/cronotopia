@@ -57,12 +57,16 @@ func (h *DBHandler) SearchVectors(query string, limit int, searchParams ...Searc
 		return []SearchResult{}, err
 	}
 
+	annIndexSchema := tableSchema(conn, "vectors_ann_index")
+	secSchema := tableSchema(conn, "sections")
+	entSchema := tableSchema(conn, "entities")
+
 	results := make([]SearchResult, 0, limit)
 	seenEntity := make(map[int]bool)
 
 	for _, v := range topAnnResults {
 		var vectorID int64
-		_ = sqlitex.Execute(conn, "SELECT vectors_id FROM vectors_ann_index WHERE chunk_id = ? AND chunk_position = ? LIMIT 1", &sqlitex.ExecOptions{
+		_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT vectors_id FROM %s.vectors_ann_index WHERE chunk_id = ? AND chunk_position = ? LIMIT 1", annIndexSchema), &sqlitex.ExecOptions{
 			Args: []any{v.ChunkRowID, v.ChunkPosition},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				vectorID = stmt.ColumnInt64(0)
@@ -74,12 +78,12 @@ func (h *DBHandler) SearchVectors(query string, limit int, searchParams ...Searc
 		}
 
 		var res SearchResult
-		querySQL := `
+		querySQL := fmt.Sprintf(`
 			SELECT s.entity_id, COALESCE(e.title, s.title), s.content, COALESCE(e.article_id, 0)
-			FROM sections s
-			LEFT JOIN entities e ON s.entity_id = e.id
+			FROM %s.sections s
+			LEFT JOIN %s.entities e ON s.entity_id = e.id
 			WHERE s.id = ?
-		`
+		`, secSchema, entSchema)
 		_ = sqlitex.Execute(conn, querySQL, &sqlitex.ExecOptions{
 			Args: []any{vectorID},
 			ResultFunc: func(stmt *sqlite.Stmt) error {

@@ -36,14 +36,17 @@ func (h *DBHandler) ArticleGetByEntity(entityID int) (ArticleResult, error) {
 	}
 	defer h.pool.Put(conn)
 
+	secSchema := tableSchema(conn, "sections")
+	entSchema := tableSchema(conn, "entities")
+
 	targetTitle := ""
-	_ = sqlitex.Execute(conn, `
+	_ = sqlitex.Execute(conn, fmt.Sprintf(`
 		SELECT COALESCE(NULLIF(e.title, ''), NULLIF(s.title, ''), 'Untitled')
-		FROM sections s
-		LEFT JOIN entities e ON s.entity_id = e.id
+		FROM %s.sections s
+		LEFT JOIN %s.entities e ON s.entity_id = e.id
 		WHERE s.entity_id = ?
 		LIMIT 1
-	`, &sqlitex.ExecOptions{
+	`, secSchema, entSchema), &sqlitex.ExecOptions{
 		Args: []any{entityID},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			targetTitle = stmt.ColumnText(0)
@@ -52,12 +55,12 @@ func (h *DBHandler) ArticleGetByEntity(entityID int) (ArticleResult, error) {
 	})
 
 	var res ArticleResult
-	err := sqlitex.Execute(conn, `
+	err := sqlitex.Execute(conn, fmt.Sprintf(`
 		SELECT id, title, content
-		FROM sections
+		FROM %s.sections
 		WHERE entity_id = ?
 		ORDER BY id ASC
-	`, &sqlitex.ExecOptions{
+	`, secSchema), &sqlitex.ExecOptions{
 		Args: []any{entityID},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			res.Sections = append(res.Sections, ArticleResultSection{
@@ -101,8 +104,9 @@ func (h *DBHandler) ArticleGetByArticle(articleID int) (ArticleResult, error) {
 	}
 	defer h.pool.Put(conn)
 
+	entSchema := tableSchema(conn, "entities")
 	targetEntityID := 0
-	_ = sqlitex.Execute(conn, `SELECT id FROM entities WHERE article_id = ? LIMIT 1`, &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, fmt.Sprintf(`SELECT id FROM %s.entities WHERE article_id = ? LIMIT 1`, entSchema), &sqlitex.ExecOptions{
 		Args: []any{articleID},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			targetEntityID = int(stmt.ColumnInt64(0))

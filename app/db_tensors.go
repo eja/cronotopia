@@ -28,7 +28,8 @@ func (h *DBHandler) AiHasModel() bool {
 	}
 	defer h.pool.Put(conn)
 
-	return hasTable(conn, "tensors")
+	schema := tableSchema(conn, "tensors")
+	return hasSchemaTable(conn, schema, "tensors")
 }
 
 func (h *DBHandler) AiClearModel() error {
@@ -57,17 +58,10 @@ func (h *DBHandler) AiGetTensorBlob(rowID int64, offset int64, dest []byte) erro
 	}
 	defer h.pool.Put(conn)
 
-	schema := "main"
-	_ = sqlitex.Execute(conn, "SELECT schema FROM pragma_table_list WHERE name = 'tensors' LIMIT 1", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			schema = stmt.ColumnText(0)
-			return nil
-		},
-	})
-
+	schema := tableSchema(conn, "tensors")
 	blob, err := conn.OpenBlob(schema, "tensors", "data", rowID, false)
 	if err != nil {
-		return fmt.Errorf("failed to open tensor blob (row %d): %w", rowID, err)
+		return fmt.Errorf("failed to open tensor blob (row %d in %s): %w", rowID, schema, err)
 	}
 	defer blob.Close()
 
@@ -90,8 +84,9 @@ func (h *DBHandler) AiLoadTensorInfos() (map[string]GGUFTensorInfo, error) {
 	}
 	defer h.pool.Put(conn)
 
+	schema := tableSchema(conn, "tensors")
 	tensors := make(map[string]GGUFTensorInfo)
-	err := sqlitex.Execute(conn, "SELECT rowid, name, dtype, dims FROM tensors", &sqlitex.ExecOptions{
+	err := sqlitex.Execute(conn, fmt.Sprintf("SELECT rowid, name, dtype, dims FROM %s.tensors", schema), &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			rowID := stmt.ColumnInt64(0)
 			name := stmt.ColumnText(1)

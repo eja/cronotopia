@@ -23,9 +23,12 @@ func (h *DBHandler) SearchEntityLabels(searchQuery string, limit int, searchPara
 		return nil, nil
 	}
 
-	if !hasTable(conn, "entity_label_search") {
+	ftsSchema := tableSchema(conn, "entity_label_search")
+	if !hasSchemaTable(conn, ftsSchema, "entity_label_search") {
 		return nil, nil
 	}
+
+	entSchema := tableSchema(conn, "entities")
 
 	var p SearchParams
 	if len(searchParams) > 0 {
@@ -46,13 +49,13 @@ func (h *DBHandler) SearchEntityLabels(searchQuery string, limit int, searchPara
 		fetchLimit = MaxSearchCandidates
 	}
 
-	sqlQuery := `
+	sqlQuery := fmt.Sprintf(`
 		WITH matched AS (
 			SELECT 
 				rowid AS entity_id, 
 				bm25(entity_label_search) AS power,
 				snippet(entity_label_search, 0, '<mark>', '</mark>', '...', 16) AS snip
-			FROM entity_label_search
+			FROM %s.entity_label_search
 			WHERE entity_label_search MATCH ?
 		)
 		SELECT
@@ -63,10 +66,10 @@ func (h *DBHandler) SearchEntityLabels(searchQuery string, limit int, searchPara
 			m.snip,
 			m.power
 		FROM matched m
-		LEFT JOIN entities e ON m.entity_id = e.id
+		LEFT JOIN %s.entities e ON m.entity_id = e.id
 		ORDER BY m.power ASC
 		LIMIT ?
-	`
+	`, ftsSchema, entSchema)
 
 	var results []SearchResult
 	seenEntity := make(map[int]bool)

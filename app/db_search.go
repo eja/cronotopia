@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"unicode/utf8"
@@ -153,13 +154,14 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 		return info
 	}
 
+	placeSchema := tableSchema(conn, "entity_places")
 	type placeRow struct {
 		code int
 		lat  float64
 		lon  float64
 	}
 	var places []placeRow
-	_ = sqlitex.Execute(conn, "SELECT prop_code, latitude, longitude FROM entity_places WHERE entity_id = ?", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT prop_code, latitude, longitude FROM %s.entity_places WHERE entity_id = ?", placeSchema), &sqlitex.ExecOptions{
 		Args: []any{entityID},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			places = append(places, placeRow{
@@ -206,13 +208,14 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 		}
 	}
 
+	timeSchema := tableSchema(conn, "entity_times")
 	type timeRow struct {
 		code    int
 		y, m, d int
 		jd      int64
 	}
 	var times []timeRow
-	_ = sqlitex.Execute(conn, "SELECT prop_code, year, month, day, julian_day FROM entity_times WHERE entity_id = ? ORDER BY julian_day ASC", &sqlitex.ExecOptions{
+	_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT prop_code, year, month, day, julian_day FROM %s.entity_times WHERE entity_id = ? ORDER BY julian_day ASC", timeSchema), &sqlitex.ExecOptions{
 		Args: []any{entityID},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			times = append(times, timeRow{
@@ -247,13 +250,14 @@ func (h *DBHandler) GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, ta
 		}
 	}
 
-	if hasTable(conn, "media") {
-		_ = sqlitex.Execute(conn, `
+	mediaSchema := tableSchema(conn, "media")
+	if hasSchemaTable(conn, mediaSchema, "media") {
+		_ = sqlitex.Execute(conn, fmt.Sprintf(`
 			SELECT id, COALESCE(author, ''), COALESCE(title, ''), COALESCE(language, ''), LENGTH(content), COALESCE(mode, '')
-			FROM media
+			FROM %s.media
 			WHERE entity_id = ? OR entity_author_id = ?
 			ORDER BY id ASC
-		`, &sqlitex.ExecOptions{
+		`, mediaSchema), &sqlitex.ExecOptions{
 			Args: []any{entityID, entityID},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				info.Media = append(info.Media, MediaItem{
@@ -281,31 +285,33 @@ func (h *DBHandler) entityMatchesTime(conn *sqlite.Conn, entityID int, p SearchP
 	var query string
 	var args []any
 
+	timeSchema := tableSchema(conn, "entity_times")
+
 	if p.Year != 0 {
 		minJD, maxJD := getJulianDayBounds(p.Year, p.Month, p.Day)
 		if p.Range == 0 {
 			if minJD == maxJD {
-				query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND julian_day = ? LIMIT 1"
+				query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND julian_day = ? LIMIT 1", timeSchema)
 				args = []any{entityID, minJD}
 			} else {
-				query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND julian_day >= ? AND julian_day <= ? LIMIT 1"
+				query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND julian_day >= ? AND julian_day <= ? LIMIT 1", timeSchema)
 				args = []any{entityID, minJD, maxJD}
 			}
 		} else if p.Range < 0 {
-			query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND julian_day <= ? ORDER BY julian_day DESC LIMIT 1"
+			query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND julian_day <= ? ORDER BY julian_day DESC LIMIT 1", timeSchema)
 			args = []any{entityID, minJD}
 		} else if p.Range > 0 {
-			query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND julian_day >= ? ORDER BY julian_day ASC LIMIT 1"
+			query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND julian_day >= ? ORDER BY julian_day ASC LIMIT 1", timeSchema)
 			args = []any{entityID, maxJD}
 		}
 	} else if p.Month > 0 && p.Day > 0 {
-		query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND month = ? AND day = ? LIMIT 1"
+		query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND month = ? AND day = ? LIMIT 1", timeSchema)
 		args = []any{entityID, p.Month, p.Day}
 	} else if p.Month > 0 {
-		query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND month = ? LIMIT 1"
+		query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND month = ? LIMIT 1", timeSchema)
 		args = []any{entityID, p.Month}
 	} else if p.Day > 0 {
-		query = "SELECT prop_code FROM entity_times WHERE entity_id = ? AND day = ? LIMIT 1"
+		query = fmt.Sprintf("SELECT prop_code FROM %s.entity_times WHERE entity_id = ? AND day = ? LIMIT 1", timeSchema)
 		args = []any{entityID, p.Day}
 	}
 
