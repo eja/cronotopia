@@ -118,7 +118,6 @@ func ImportWikipedia(pool *sqlitex.Pool, src string) error {
 	conn := pool.Get(context.Background())
 	if conn != nil {
 		_ = sqlitex.Execute(conn, "INSERT INTO section_search(section_search) VALUES('rebuild')", nil)
-		_ = sqlitex.Execute(conn, "INSERT INTO entity_label_search(entity_label_search) VALUES('rebuild')", nil)
 		pool.Put(conn)
 	}
 
