@@ -10,27 +10,27 @@ import (
 	"sort"
 	"strings"
 
+	"cronotopia/acta"
 	"cronotopia/atlas"
-	"cronotopia/event"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParams ...event.SearchParams) ([]event.SearchResult, error) {
-	sanitized := event.SanitizeFTSQuery(searchQuery)
+func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParams ...acta.SearchParams) ([]acta.SearchResult, error) {
+	sanitized := acta.SanitizeFTSQuery(searchQuery)
 	if sanitized == "" {
 		return nil, nil
 	}
 
-	ftsSchema := event.TableSchema(conn, "section_search")
-	if !event.HasSchemaTable(conn, ftsSchema, "section_search") {
+	ftsSchema := acta.TableSchema(conn, "section_search")
+	if !acta.HasSchemaTable(conn, ftsSchema, "section_search") {
 		return nil, nil
 	}
 
-	secSchema := event.TableSchema(conn, "sections")
-	entSchema := event.TableSchema(conn, "entities")
+	secSchema := acta.TableSchema(conn, "sections")
+	entSchema := acta.TableSchema(conn, "entities")
 
-	var p event.SearchParams
+	var p acta.SearchParams
 	if len(searchParams) > 0 {
 		p = searchParams[0]
 	}
@@ -46,7 +46,7 @@ func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParam
 		fetchLimit = 60
 	}
 	if hasSpace || hasTime {
-		fetchLimit = event.MaxSearchCandidates
+		fetchLimit = acta.MaxSearchCandidates
 	}
 
 	sqlQuery := fmt.Sprintf(`
@@ -65,14 +65,14 @@ func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParam
 		LIMIT ?
 	`, ftsSchema, secSchema, entSchema)
 
-	var results []event.SearchResult
+	var results []acta.SearchResult
 	seenEntity := make(map[int]bool)
 
 	err := sqlitex.Execute(conn, sqlQuery, &sqlitex.ExecOptions{
 		Args: []any{sanitized, fetchLimit},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			if len(results) >= limit {
-				return event.ErrDone
+				return acta.ErrDone
 			}
 
 			entID := int(stmt.ColumnInt64(0))
@@ -80,7 +80,7 @@ func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParam
 				return nil
 			}
 
-			info := event.GetEntityInfo(conn, entID, p.Lat, p.Lon)
+			info := acta.GetEntityInfo(conn, entID, p.Lat, p.Lon)
 			matchCode := 0
 			if hasSpace {
 				if !info.HasCoord || atlas.HaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
@@ -89,7 +89,7 @@ func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParam
 				matchCode = info.Code
 			}
 			if hasTime {
-				matched, code := event.MatchesTime(conn, entID, p)
+				matched, code := acta.MatchesTime(conn, entID, p)
 				if !matched {
 					return nil
 				}
@@ -97,13 +97,13 @@ func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParam
 			}
 
 			seenEntity[entID] = true
-			res := event.SearchResult{
+			res := acta.SearchResult{
 				EntityID:  entID,
 				ArticleID: int(stmt.ColumnInt64(2)),
 				Title:     stmt.ColumnText(1),
 				Text:      stmt.ColumnText(3),
 				Snippet:   stmt.ColumnText(4),
-				Power:     event.NormalizeBM25(stmt.ColumnFloat(5)),
+				Power:     acta.NormalizeBM25(stmt.ColumnFloat(5)),
 				Lat:       info.Lat,
 				Lon:       info.Lon,
 				Year:      info.YearBegin,
@@ -117,29 +117,29 @@ func SearchLexical(conn *sqlite.Conn, searchQuery string, limit int, searchParam
 			}
 
 			if res.Snippet == "" {
-				res.Snippet = event.Snippet(res.Text, 160)
+				res.Snippet = acta.Snippet(res.Text, 160)
 			}
 			results = append(results, res)
 
 			if len(results) >= limit {
-				return event.ErrDone
+				return acta.ErrDone
 			}
 			return nil
 		},
 	})
 
-	if err != nil && !errors.Is(err, event.ErrDone) {
+	if err != nil && !errors.Is(err, acta.ErrDone) {
 		return nil, err
 	}
 	return results, nil
 }
 
-func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, searchParams ...event.SearchParams) ([]event.SearchResult, error) {
+func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, searchParams ...acta.SearchParams) ([]acta.SearchResult, error) {
 	if eng == nil || !eng.HasANN(conn) {
-		return []event.SearchResult{}, nil
+		return []acta.SearchResult{}, nil
 	}
 
-	var p event.SearchParams
+	var p acta.SearchParams
 	if len(searchParams) > 0 {
 		p = searchParams[0]
 	}
@@ -156,7 +156,7 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 	queryEmbedding, err := eng.Embeddings(fullQuery)
 	if err != nil {
 		log.Printf("SearchVectors: embedding error: %v", err)
-		return []event.SearchResult{}, err
+		return []acta.SearchResult{}, err
 	}
 
 	candidateLimit := limit * 6
@@ -164,20 +164,20 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 		candidateLimit = 60
 	}
 	if hasSpace || hasTime {
-		candidateLimit = event.MaxSearchCandidates
+		candidateLimit = acta.MaxSearchCandidates
 	}
 
 	topAnnResults, err := eng.SearchAnn(conn, queryEmbedding, eng.config.AnnSize, candidateLimit)
 	if err != nil {
 		log.Printf("SearchVectors: SearchAnn error: %v", err)
-		return []event.SearchResult{}, err
+		return []acta.SearchResult{}, err
 	}
 
-	annIndexSchema := event.TableSchema(conn, "vectors_ann_index")
-	secSchema := event.TableSchema(conn, "sections")
-	entSchema := event.TableSchema(conn, "entities")
+	annIndexSchema := acta.TableSchema(conn, "vectors_ann_index")
+	secSchema := acta.TableSchema(conn, "sections")
+	entSchema := acta.TableSchema(conn, "entities")
 
-	results := make([]event.SearchResult, 0, limit)
+	results := make([]acta.SearchResult, 0, limit)
 	seenEntity := make(map[int]bool)
 
 	for _, v := range topAnnResults {
@@ -193,7 +193,7 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 			continue
 		}
 
-		var res event.SearchResult
+		var res acta.SearchResult
 		querySQL := fmt.Sprintf(`
 			SELECT s.entity_id, COALESCE(e.title, s.title), s.content, COALESCE(e.article_id, 0)
 			FROM %s.sections s
@@ -215,7 +215,7 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 			continue
 		}
 
-		info := event.GetEntityInfo(conn, res.EntityID, p.Lat, p.Lon)
+		info := acta.GetEntityInfo(conn, res.EntityID, p.Lat, p.Lon)
 		matchCode := 0
 		if hasSpace {
 			if !info.HasCoord || atlas.HaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
@@ -224,7 +224,7 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 			matchCode = info.Code
 		}
 		if hasTime {
-			matched, code := event.MatchesTime(conn, res.EntityID, p)
+			matched, code := acta.MatchesTime(conn, res.EntityID, p)
 			if !matched {
 				continue
 			}
@@ -242,7 +242,7 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 		res.Places = info.Places
 		res.Media = info.Media
 		res.Type = "S"
-		res.Snippet = event.Snippet(res.Text, 160)
+		res.Snippet = acta.Snippet(res.Text, 160)
 		res.Power = math.Max(0, math.Min(100, float64((v.Distance+1.0)/2.0*100.0)))
 		results = append(results, res)
 
@@ -253,18 +253,18 @@ func SearchVectors(conn *sqlite.Conn, eng *Engine, query string, limit int, sear
 	return results, nil
 }
 
-func SearchHybrid(conn *sqlite.Conn, eng *Engine, query string, limit int, searchParams ...event.SearchParams) ([]event.SearchResult, error) {
+func SearchHybrid(conn *sqlite.Conn, eng *Engine, query string, limit int, searchParams ...acta.SearchParams) ([]acta.SearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	var p event.SearchParams
+	var p acta.SearchParams
 	if len(searchParams) > 0 {
 		p = searchParams[0]
 	}
 
 	var lastErr error
-	entResults, err := event.SearchEntityLabels(conn, query, limit, p)
+	entResults, err := acta.SearchEntityLabels(conn, query, limit, p)
 	if err != nil {
 		lastErr = err
 	}
@@ -274,7 +274,7 @@ func SearchHybrid(conn *sqlite.Conn, eng *Engine, query string, limit int, searc
 		lastErr = err
 	}
 
-	var semResults []event.SearchResult
+	var semResults []acta.SearchResult
 	if eng != nil {
 		semResults, err = SearchVectors(conn, eng, query, limit, p)
 		if err != nil {
@@ -283,14 +283,14 @@ func SearchHybrid(conn *sqlite.Conn, eng *Engine, query string, limit int, searc
 	}
 
 	type candidate struct {
-		item     event.SearchResult
+		item     acta.SearchResult
 		rrfScore float64
 	}
 
 	candMap := make(map[int]*candidate)
 	const kRRF = 60.0
 
-	mergeList := func(results []event.SearchResult) {
+	mergeList := func(results []acta.SearchResult) {
 		for rank, res := range results {
 			if res.EntityID == 0 {
 				continue
@@ -371,7 +371,7 @@ func SearchHybrid(conn *sqlite.Conn, eng *Engine, query string, limit int, searc
 		maxPossibleRRF = float64(numActiveLists) / (kRRF + 1.0)
 	}
 
-	results := make([]event.SearchResult, len(merged))
+	results := make([]acta.SearchResult, len(merged))
 	for i, c := range merged {
 		if maxPossibleRRF > 0 {
 			c.item.Power = (c.rrfScore / maxPossibleRRF) * 100.0
@@ -380,7 +380,7 @@ func SearchHybrid(conn *sqlite.Conn, eng *Engine, query string, limit int, searc
 	}
 
 	if len(results) == 0 && lastErr != nil {
-		return []event.SearchResult{}, lastErr
+		return []acta.SearchResult{}, lastErr
 	}
 	return results, nil
 }

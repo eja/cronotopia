@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
+	"cronotopia/acta"
 	"cronotopia/atlas"
 	"cronotopia/corpus"
-	"cronotopia/event"
 	"cronotopia/media"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -167,7 +167,7 @@ func (s *Server) Routes() http.Handler {
 
 		if !hasText && !hasSpace && !hasTime {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode([]event.SearchResult{})
+			_ = json.NewEncoder(w).Encode([]acta.SearchResult{})
 			return
 		}
 
@@ -175,7 +175,7 @@ func (s *Server) Routes() http.Handler {
 			rad = 100.0
 		}
 
-		params := event.SearchParams{
+		params := acta.SearchParams{
 			QueryText: query,
 			Lat:       lat,
 			Lon:       lon,
@@ -190,14 +190,14 @@ func (s *Server) Routes() http.Handler {
 		}
 
 		if !hasText && (hasSpace || hasTime) {
-			events, err := event.SearchEvents(conn, params)
+			events, err := acta.SearchEvents(conn, params)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			results := make([]event.SearchResult, 0, len(events))
+			results := make([]acta.SearchResult, 0, len(events))
 			for _, ev := range events {
-				results = append(results, event.SearchResult{
+				results = append(results, acta.SearchResult{
 					EntityID:  ev.ID,
 					ArticleID: ev.ArticleID,
 					Title:     ev.Label,
@@ -221,7 +221,7 @@ func (s *Server) Routes() http.Handler {
 			return
 		}
 
-		var results []event.SearchResult
+		var results []acta.SearchResult
 		var err error
 
 		if mode == "semantic" {
@@ -233,7 +233,7 @@ func (s *Server) Routes() http.Handler {
 		} else if mode == "lexical" {
 			results, err = corpus.SearchLexical(conn, query, limit, params)
 		} else if mode == "entity" {
-			results, err = event.SearchEntityLabels(conn, query, limit, params)
+			results, err = acta.SearchEntityLabels(conn, query, limit, params)
 		} else {
 			results, err = corpus.SearchHybrid(conn, s.engine, query, limit, params)
 		}
@@ -246,7 +246,7 @@ func (s *Server) Routes() http.Handler {
 			results = results[:limit]
 		}
 		if results == nil {
-			results = []event.SearchResult{}
+			results = []acta.SearchResult{}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

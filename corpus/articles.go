@@ -5,7 +5,7 @@ package corpus
 import (
 	"fmt"
 
-	"cronotopia/event"
+	"cronotopia/acta"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -30,8 +30,8 @@ type ArticleResultSection struct {
 }
 
 func GetArticleByEntity(conn *sqlite.Conn, entityID int) (ArticleResult, error) {
-	secSchema := event.TableSchema(conn, "sections")
-	entSchema := event.TableSchema(conn, "entities")
+	secSchema := acta.TableSchema(conn, "sections")
+	entSchema := acta.TableSchema(conn, "entities")
 
 	targetTitle := ""
 	_ = sqlitex.Execute(conn, fmt.Sprintf(`
@@ -79,7 +79,7 @@ func GetArticleByEntity(conn *sqlite.Conn, entityID int) (ArticleResult, error) 
 	res.EntityID = entityID
 	res.Title = targetTitle
 
-	info := event.GetEntityInfo(conn, res.EntityID, 0, 0)
+	info := acta.GetEntityInfo(conn, res.EntityID, 0, 0)
 	res.Latitude = info.Lat
 	res.Longitude = info.Lon
 	res.Year = info.YearBegin
@@ -92,7 +92,7 @@ func GetArticleByEntity(conn *sqlite.Conn, entityID int) (ArticleResult, error) 
 }
 
 func GetArticleByArticle(conn *sqlite.Conn, articleID int) (ArticleResult, error) {
-	entSchema := event.TableSchema(conn, "entities")
+	entSchema := acta.TableSchema(conn, "entities")
 	targetEntityID := 0
 	_ = sqlitex.Execute(conn, fmt.Sprintf(`SELECT id FROM %s.entities WHERE article_id = ? LIMIT 1`, entSchema), &sqlitex.ExecOptions{
 		Args: []any{articleID},

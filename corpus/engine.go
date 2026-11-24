@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"cronotopia/event"
+	"cronotopia/acta"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -119,7 +119,7 @@ func (e *Engine) Init(conn *sqlite.Conn) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	schema := event.TableSchema(conn, "tensors")
+	schema := acta.TableSchema(conn, "tensors")
 	if !HasModel(conn, schema) {
 		return fmt.Errorf("no AI model found in database")
 	}
@@ -474,8 +474,8 @@ func (e *Engine) ProcessANN(conn *sqlite.Conn) error {
 }
 
 func (e *Engine) HasANN(conn *sqlite.Conn) bool {
-	schema := event.TableSchema(conn, "vectors_ann_index")
-	return event.HasSchemaTable(conn, schema, "vectors_ann_index")
+	schema := acta.TableSchema(conn, "vectors_ann_index")
+	return acta.HasSchemaTable(conn, schema, "vectors_ann_index")
 }
 
 func (e *Engine) SearchAnn(conn *sqlite.Conn, vectors []float32, size int, limit int) ([]VectorDistance, error) {
@@ -487,9 +487,9 @@ func (e *Engine) SearchAnn(conn *sqlite.Conn, vectors []float32, size int, limit
 	copy(mrlQuery, vectors[:size])
 	l2Norm(mrlQuery)
 
-	centSchema := event.TableSchema(conn, "vectors_ann_centroids")
-	chunkSchema := event.TableSchema(conn, "vectors_ann_chunks")
-	linkSchema := event.TableSchema(conn, "vectors_ann_centroid_chunks")
+	centSchema := acta.TableSchema(conn, "vectors_ann_centroids")
+	chunkSchema := acta.TableSchema(conn, "vectors_ann_chunks")
+	linkSchema := acta.TableSchema(conn, "vectors_ann_centroid_chunks")
 
 	type centroidDist struct {
 		id   int

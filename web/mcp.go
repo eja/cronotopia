@@ -12,9 +12,9 @@ import (
 	"strings"
 	"sync"
 
+	"cronotopia/acta"
 	"cronotopia/atlas"
 	"cronotopia/corpus"
-	"cronotopia/event"
 	"cronotopia/media"
 	"zombiezen.com/go/sqlite"
 )
@@ -299,7 +299,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 		_, hasLon := args["longitude"]
 		_, hasYear := args["year"]
 
-		events, err := event.SearchEvents(conn, event.SearchParams{
+		events, err := acta.SearchEvents(conn, acta.SearchParams{
 			Lat:      lat,
 			Lon:      lon,
 			RadiusKm: rad,
@@ -312,7 +312,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
 		}
 		if events == nil {
-			events = []event.EventResult{}
+			events = []acta.EventResult{}
 		}
 		data, _ := json.MarshalIndent(events, "", "  ")
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
@@ -329,7 +329,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 			limit = int(l)
 		}
 
-		var results []event.SearchResult
+		var results []acta.SearchResult
 		var err error
 
 		if mode == "semantic" {
@@ -343,7 +343,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 		} else if mode == "lexical" {
 			results, err = corpus.SearchLexical(conn, q, limit)
 		} else if mode == "entity" {
-			results, err = event.SearchEntityLabels(conn, q, limit)
+			results, err = acta.SearchEntityLabels(conn, q, limit)
 		} else {
 			results, err = corpus.SearchHybrid(conn, s.engine, q, limit)
 		}
@@ -352,7 +352,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
 		}
 		if results == nil {
-			results = []event.SearchResult{}
+			results = []acta.SearchResult{}
 		}
 
 		data, _ := json.MarshalIndent(results, "", "  ")

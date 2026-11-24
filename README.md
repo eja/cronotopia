@@ -14,7 +14,7 @@ The system includes a pure Go execution engine for quantized embedding models, e
 
 Cronotopia is structured around four orthogonal domain packages, a virtual file system layer, and an HTTP/API layer:
 
-*   **`event`:** The 4D Spatiotemporal Knowledge Graph. Ingests Wikidata dumps, manages entities, computes Julian day calendar mathematics, builds geospatial R\*Tree indices, and executes space-time event queries (`SearchEvents`).
+*   **`acta`:** The 4D Spatiotemporal Knowledge Graph. Ingests Wikidata dumps, manages entities, computes Julian day calendar mathematics, builds geospatial R\*Tree indices, and executes space-time event queries (`SearchEvents`).
 *   **`atlas`:** Cartographic substrate. Manages vector map tiles (PMTiles), raster elevation heightmaps (NOAA ETOPO DEM), MVT Protocol Buffer parsing, and geometric calculations (Haversine distance, bounding boxes, tile coordinates).
 *   **`corpus`:** Encyclopedic text and semantic search. Manages Wikipedia articles, SQLite FTS5 full-text indices, GGUF model ingestion, native Q8_0 transformer inference (Qwen3), vector embeddings, Approximate Nearest Neighbor (ANN) clustering, and Reciprocal Rank Fusion (RRF) hybrid search.
 *   **`media`:** Primary document archives. Stores and streams paginated books, interactive musical scores (MusicXML), and audio with HTTP byte-range request support.

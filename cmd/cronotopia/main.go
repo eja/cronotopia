@@ -14,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 
+	"cronotopia/acta"
 	"cronotopia/atlas"
 	"cronotopia/corpus"
-	"cronotopia/event"
 	"cronotopia/media"
 	"cronotopia/vfs"
 	"cronotopia/web"
@@ -412,7 +412,7 @@ func main() {
 	}
 
 	if options.wikidataImport != "" {
-		if err := event.ImportWikidata(conn, options.wikidataImport, numWorkers()); err != nil {
+		if err := acta.ImportWikidata(conn, options.wikidataImport, numWorkers()); err != nil {
 			log.Fatalf("Wikidata import error: %v", err)
 		}
 		log.Println("Wikidata import completed successfully.")

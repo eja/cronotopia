@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log"
 
-	"cronotopia/event"
+	"cronotopia/acta"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -20,7 +20,7 @@ func ImportWikilite(pool *sqlitex.Pool, srcDBPath string) error {
 	}
 	defer pool.Put(conn)
 
-	if err := event.InitSchema(conn); err != nil {
+	if err := acta.InitSchema(conn); err != nil {
 		return err
 	}
 	if err := InitSchema(conn); err != nil {
