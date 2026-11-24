@@ -156,7 +156,7 @@ func hasTable(conn *sqlite.Conn, name string) bool {
 }
 
 func tableSchema(conn *sqlite.Conn, table string) string {
-	candidates := []string{"ai_db", "corpus_db", "map_db", "elevation_db", "media_db", "main"}
+	candidates := []string{"corpus_db", "map_db", "elevation_db", "media_db", "main"}
 	for _, s := range candidates {
 		if hasSchemaTable(conn, s, table) {
 			var hasRow bool

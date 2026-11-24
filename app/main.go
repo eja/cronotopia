@@ -16,7 +16,7 @@ import (
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.23"
+	Version = "8.11.24"
 )
 
 var (
@@ -29,11 +29,7 @@ func main() {
 	options = &Config{}
 
 	flag.StringVar(&options.dbPath, "db", "cronotopia.db", "SQLite database path")
-	flag.StringVar(&options.dbCorpus, "db-corpus", "", "Corpus SQLite database path")
-	flag.StringVar(&options.dbAi, "db-ai", "", "AI model SQLite database path")
-	flag.StringVar(&options.dbMap, "db-map", "", "Map tiles SQLite database path")
-	flag.StringVar(&options.dbElevation, "db-elevation", "", "Elevation SQLite database path")
-	flag.StringVar(&options.dbMedia, "db-media", "", "Media SQLite database path")
+	flag.Var(&options.dbAdd, "db-add", "Additional database to load (repeatable or comma-separated)")
 	flag.BoolVar(&options.dbShell, "db-shell", false, "Start interactive SQLite shell")
 	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd")
 	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd")

@@ -27,14 +27,51 @@ type attachedTarget struct {
 	seekableReader io.Closer
 }
 
-func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
+func detectSchema(uri string) (string, error) {
+	conn, err := sqlite.OpenConn(uri, sqlite.OpenReadOnly|sqlite.OpenURI)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	tables := make(map[string]bool)
+	err = sqlitex.Execute(conn, "SELECT name FROM sqlite_master WHERE type='table'", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			tables[stmt.ColumnText(0)] = true
+			return nil
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	switch {
+	case tables["elevations"]:
+		return "elevation_db", nil
+	case tables["tiles_shallow"] || tables["tiles_data"] || tables["tiles"]:
+		return "map_db", nil
+	case tables["media"]:
+		return "media_db", nil
+	case tables["sections"] || tables["entity_places"] || tables["entity_times"] || tables["entity_label_search"]:
+		return "corpus_db", nil
+	default:
+		return "", fmt.Errorf("unable to autodetect database schema type")
+	}
+}
+
+func prepareAttachedTarget(idx int, filePath string) (*attachedTarget, error) {
 	if filePath == "" {
 		return nil, nil
 	}
 
+	absPath, err := filepath.Abs(filePath)
+	if err == nil {
+		filePath = absPath
+	}
+
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open %s database (%s): %w", schema, filePath, err)
+		return nil, fmt.Errorf("failed to open database (%s): %w", filePath, err)
 	}
 
 	header := make([]byte, 16)
@@ -42,8 +79,7 @@ func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
 	header = header[:n]
 
 	target := &attachedTarget{
-		schema: schema,
-		path:   filePath,
+		path: filePath,
 	}
 
 	if isZstdHeader(header) {
@@ -52,7 +88,7 @@ func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
 		dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
 		if err != nil {
 			f.Close()
-			return nil, fmt.Errorf("failed to initialize zstd decoder for %s: %w", schema, err)
+			return nil, fmt.Errorf("failed to initialize zstd decoder (%s): %w", filePath, err)
 		}
 		target.zstdDec = dec
 
@@ -64,7 +100,7 @@ func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
 		if err != nil {
 			dec.Close()
 			f.Close()
-			return nil, fmt.Errorf("failed to create seekable reader for %s: %w", schema, err)
+			return nil, fmt.Errorf("failed to create seekable reader (%s): %w", filePath, err)
 		}
 		target.seekableReader = sReader
 
@@ -73,18 +109,26 @@ func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
 			sReader.Close()
 			dec.Close()
 			f.Close()
-			return nil, fmt.Errorf("failed to seek end of %s: %w", schema, err)
+			return nil, fmt.Errorf("failed to seek end (%s): %w", filePath, err)
 		}
 		if _, err := sReader.Seek(0, io.SeekStart); err != nil {
 			sReader.Close()
 			dec.Close()
 			f.Close()
-			return nil, fmt.Errorf("failed to seek start of %s: %w", schema, err)
+			return nil, fmt.Errorf("failed to seek start (%s): %w", filePath, err)
 		}
 
-		virtualName := fmt.Sprintf("%s.sqlite", schema)
+		vfsName, err := getOrInitGlobalVFS()
+		if err != nil {
+			sReader.Close()
+			dec.Close()
+			f.Close()
+			return nil, fmt.Errorf("failed to initialize global VFS: %w", err)
+		}
+
+		virtualName := fmt.Sprintf("joined_%d.sqlite", idx)
 		globalVFSRouter.Register(virtualName, &lockedReaderAt{r: sReader}, uncompressedSize)
-		target.uri = fmt.Sprintf("file:%s?mode=ro&immutable=1", virtualName)
+		target.uri = fmt.Sprintf("file:%s?vfs=%s&mode=ro&immutable=1", virtualName, vfsName)
 	} else if isSQLiteHeader(header) {
 		f.Close()
 		cleanPath := filepath.ToSlash(filePath)
@@ -101,33 +145,42 @@ func prepareAttachedTarget(schema, filePath string) (*attachedTarget, error) {
 		}
 	} else {
 		f.Close()
-		return nil, fmt.Errorf("unsupported database format for %s (%s)", schema, filePath)
+		return nil, fmt.Errorf("unsupported database format (%s)", filePath)
 	}
+
+	schema, err := detectSchema(target.uri)
+	if err != nil {
+		if target.seekableReader != nil {
+			target.seekableReader.Close()
+		}
+		if target.zstdDec != nil {
+			target.zstdDec.Close()
+		}
+		if target.zstFile != nil {
+			target.zstFile.Close()
+		}
+		return nil, fmt.Errorf("failed to detect schema for %s: %w", filePath, err)
+	}
+	target.schema = schema
 
 	return target, nil
 }
 
 func (h *DBHandler) initAttachedDatabases() error {
-	pairs := []struct {
-		schema string
-		path   string
-	}{
-		{"corpus_db", options.dbCorpus},
-		{"ai_db", options.dbAi},
-		{"map_db", options.dbMap},
-		{"elevation_db", options.dbElevation},
-		{"media_db", options.dbMedia},
-	}
-
-	for _, p := range pairs {
-		if p.path == "" {
+	seenSchemas := make(map[string]string)
+	for i, path := range options.dbAdd {
+		if path == "" {
 			continue
 		}
-		target, err := prepareAttachedTarget(p.schema, p.path)
+		target, err := prepareAttachedTarget(i, path)
 		if err != nil {
 			return err
 		}
 		if target != nil {
+			if prevPath, exists := seenSchemas[target.schema]; exists {
+				return fmt.Errorf("duplicate database role %q detected for %s (already provided by %s)", target.schema, target.path, prevPath)
+			}
+			seenSchemas[target.schema] = target.path
 			h.attached = append(h.attached, target)
 			log.Printf("DB attached: %s (%s, zstd=%v)", target.schema, target.path, target.isZst)
 		}

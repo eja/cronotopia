@@ -329,8 +329,19 @@ func (h *DBHandler) SearchAnn(vectors []float32, size int, limit int) ([]VectorD
 		return cDists[i].dist > cDists[j].dist
 	})
 
+	totalCentroids := len(cDists)
+	nprobe := totalCentroids / 10
+	if nprobe < 16 {
+		nprobe = 16
+	}
+	if nprobe > 64 {
+		nprobe = 64
+	}
+	if nprobe > totalCentroids {
+		nprobe = totalCentroids
+	}
 	var selectedChunks []string
-	for i := 0; i < len(cDists) && i < 3; i++ {
+	for i := 0; i < len(cDists) && i < nprobe; i++ {
 		_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT chunk_id FROM %s.vectors_ann_centroid_chunks WHERE centroid_id = ?", linkSchema), &sqlitex.ExecOptions{
 			Args: []any{cDists[i].id},
 			ResultFunc: func(stmt *sqlite.Stmt) error {

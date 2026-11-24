@@ -4,15 +4,28 @@ package main
 
 import (
 	"runtime"
+	"strings"
 )
+
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSlice) Set(val string) error {
+	for _, part := range strings.Split(val, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*s = append(*s, part)
+		}
+	}
+	return nil
+}
 
 type Config struct {
 	dbPath              string
-	dbCorpus            string
-	dbAi                string
-	dbMap               string
-	dbElevation         string
-	dbMedia             string
+	dbAdd               stringSlice
 	dbShell             bool
 	compress            bool
 	decompress          bool
