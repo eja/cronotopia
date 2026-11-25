@@ -1,22 +1,34 @@
 # Cronotopia
 
-An offline-first spatio-temporal database engine, media server, and interactive map visualization platform written in Go.
+An offline-first spatio-temporal database engine, media server, and interactive 3D map visualization platform written in Go.
 
-Cronotopia ingests and indexes data from Wikidata and Wikipedia, manages books and interactive musical scores, stores vector map tiles and elevation models, and includes a native neural inference engine for quantized GGUF vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, vector tiles, elevation rasters, and media objects can reside in a single monolithic SQLite database or across modular, attached databases.
+Cronotopia indexes historical entities from Wikidata, full-text encyclopedic articles from Wikipedia, literature, and interactive musical scores, alongside vector map tiles and global digital elevation models (DEM). It includes a pure Go neural inference engine for quantized GGUF vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, vector tiles, elevation rasters, and media objects can reside in a single monolithic SQLite database or across modular, attached databases.
 
 ## Overview
 
 Cronotopia is engineered to query historical events, encyclopedic knowledge, literature, musical scores, and geographic data without internet access or external runtime dependencies. It combines historical entity extraction, full-text article search, digital media delivery, 3D terrain elevation, and an integrated vector tile server into a unified binary.
 
-The system includes a pure Go execution engine for quantized embedding models, enabling semantic and hybrid search locally on CPU without external libraries. In addition to a responsive web interface and REST API, Cronotopia implements a Model Context Protocol (MCP) server for deep integration with AI tools and autonomous agents.
+The system includes a pure Go execution engine for quantized embedding models, enabling semantic and hybrid search locally on CPU without external C libraries. In addition to a responsive web interface and REST API, Cronotopia implements a Model Context Protocol (MCP) server for deep integration with AI tools and autonomous agents.
+
+## Architecture
+
+Cronotopia is structured around four orthogonal domain packages, a virtual file system layer, and an HTTP/API layer:
+
+*   **`acta`:** The 4D Spatiotemporal Knowledge Graph. Ingests Wikidata dumps, manages entities, computes Julian day calendar mathematics, builds geospatial R\*Tree indices, and executes space-time event queries (`SearchEvents`).
+*   **`atlas`:** Cartographic substrate. Manages vector map tiles (PMTiles), raster elevation heightmaps (NOAA ETOPO DEM), MVT Protocol Buffer parsing, and geometric calculations (Haversine distance, bounding boxes, tile coordinates).
+*   **`corpus`:** Encyclopedic text and semantic search. Manages Wikipedia articles, SQLite FTS5 full-text indices, GGUF model ingestion, native Q8_0 transformer inference (Qwen3), vector embeddings, Approximate Nearest Neighbor (ANN) clustering, and Reciprocal Rank Fusion (RRF) hybrid search.
+*   **`media`:** Primary document archives. Stores and streams paginated books, interactive musical scores (MusicXML), and audio with HTTP byte-range request support.
+*   **`vfs`:** Transparent, zero-extraction, random-access virtual file system for seekable compressed Zstandard (`.zst`) SQLite files.
+*   **`web`:** Standalone web presentation and API layer. Embeds frontend assets (MapLibre GL, alphaTab, fonts), provides unified REST endpoints, and exposes the Model Context Protocol (MCP) server.
+*   **`cmd/cronotopia`:** Minimal command-line interface entrypoint.
 
 ## Key Features
 
 *   **100% Offline & Zero-Dependency:** Operates without network access once databases are populated. Self-contained Go binary with embedded web assets.
 *   **Flexible Storage Architecture (Monolithic or Modular):**
-    *   **Single-File Operation:** All tables (corpus, entities, vector embeddings, GGUF tensors, map tiles, elevation raster tiles, media) can live in a single `.db` file.
-    *   **Modular Attached Databases:** Attach external specialized databases at startup (`--db-corpus`, `--db-ai`, `--db-map`, `--db-elevation`, `--db-media`) via unified SQLite schemas.
-    *   **Transparent Zstandard (`.zst`) Compression:** Transparent, zero-extraction, random-access read-only querying directly from seekable compressed (`.zst`) database files for the main database or any attached database.
+    *   **Single-File Operation:** All tables (entities, corpus, vectors, GGUF tensors, map tiles, elevation rasters, media) can live in a single `.db` file.
+    *   **Modular Storage (`--db-add`):** Attach specialized read-only satellite databases (`.db` or `.zst`) at startup via `--db-add`. Database roles (`map_db`, `elevation_db`, `media_db`, `corpus_db`) are **automatically detected** from table signatures.
+    *   **Transparent Zstandard (`.zst`) Compression:** Zero-extraction, random-access querying directly from seekable compressed (`.zst`) files for the primary database or any attached database.
 *   **Media Delivery & Visualization:**
     *   **Books & Texts:** Integrated paginated reader supporting chunked retrieval of long texts.
     *   **Interactive Musical Scores:** Native playback and notation rendering of MusicXML scores via [alphaTab](https://alphatab.net/) with an embedded SoundFont synthesizer.
@@ -35,12 +47,12 @@ The system includes a pure Go execution engine for quantized embedding models, e
     *   Approximate Nearest Neighbor (ANN) index clustering with Matryoshka Representation Learning (MRL) dimension reduction.
     *   Hybrid retrieval combining BM25 full-text scoring, vector cosine distance, and spatio-temporal filters via Reciprocal Rank Fusion (RRF).
     *   Optional external HTTP embedding API integration.
-*   **Spatio-Temporal Indexing:** SQLite R*Trees for geographic bounding-box queries, Haversine distance ranking, and Julian day calendar conversions supporting astronomical years (exact, before, after).
+*   **Spatio-Temporal Indexing:** SQLite R\*Trees for geographic bounding-box queries, Haversine distance ranking, and Julian day calendar conversions supporting astronomical years (exact, before, after).
 *   **Vector Tile Server & 3D Web Map:**
     *   Serves vector tiles and Terrarium elevation tiles.
     *   Embedded MapLibre GL frontend with 3D terrain, hillshading, contours, cluster spiderfication, and layer toggles (3D elevation, contours, buildings, roads, labels).
     *   Direct extraction of vector feature geometries, centroids, and bounding boxes via map APIs.
-*   **Interactive Database Shell:** Built-in interactive SQLite shell with attached database support.
+*   **Interactive Database Shell:** Built-in interactive SQLite terminal.
 *   **Model Context Protocol (MCP):** Native `/mcp` endpoint exposing historical, semantic, media, and vector map tools over JSON-RPC 2.0 (POST) and Server-Sent Events (GET).
 
 ## Installation
@@ -53,15 +65,19 @@ Download prebuilt databases containing historical entities, Wikipedia articles, 
 
 ### 3. Building from Source
 
+Requires Go 1.22+:
+
 ```bash
 git clone https://github.com/eja/cronotopia.git
 cd cronotopia
-go build -o cronotopia .
+make
 ```
+
+The compiled binary will be placed at `./build/cronotopia`.
 
 ## Usage
 
-Cronotopia operates in one of four modes:
+Cronotopia operates in one of five modes:
 1.  **Import Mode:** Triggered by any `--import-*` flag. Runs the ingestion pipeline and exits.
 2.  **Compression Mode:** Triggered by `--compress` or `--decompress`. Converts databases to/from seekable Zstandard format and exits.
 3.  **AI Sync Mode:** Triggered by `--ai-sync`. Generates vector embeddings and builds the ANN index for pending sections, then exits.
@@ -72,39 +88,39 @@ Cronotopia operates in one of four modes:
 
 ### 1. Data Ingestion
 
+#### Import Wikidata Dump
+```bash
+./build/cronotopia --db cronotopia.db --import-wikidata ./wikidata-latest-all.json.gz --threads 8
+```
+
 #### Import Map Tiles (PMTiles)
 ```bash
-./cronotopia --db cronotopia.db --import-pmtiles ./planet.pmtiles --zoom 12
+./build/cronotopia --db cronotopia.db --import-pmtiles ./planet.pmtiles --zoom 12
 ```
 
 #### Import ETOPO Elevation Data
 ```bash
-./cronotopia --db cronotopia.db --import-etopo ./ETOPO_2022_v1_30s_N90W180_surface.tif
-```
-
-#### Import Wikidata Dump
-```bash
-./cronotopia --db cronotopia.db --import-wikidata ./wikidata-latest-all.json.gz --threads 8
+./build/cronotopia --db cronotopia.db --import-etopo ./ETOPO_2022_v1_30s_N90W180_surface.tif
 ```
 
 #### Import Wikipedia HTML Dump
 ```bash
-./cronotopia --db cronotopia.db --import-wikipedia ./enwiki-enterprise-html.tar.gz
+./build/cronotopia --db cronotopia.db --import-wikipedia ./enwiki-enterprise-html.tar.gz
 ```
 
 #### Import Media (Books, Scores)
 ```bash
-./cronotopia --db cronotopia.db --import-media ./media.db
+./build/cronotopia --db cronotopia.db --import-media ./media.db
 ```
 
 #### Import a GGUF Embedding Model
 ```bash
-./cronotopia --db cronotopia.db --import-gguf ./qwen3-embedding-0.6b-q8_0.gguf
+./build/cronotopia --db cronotopia.db --import-gguf ./qwen3-embedding-0.6b-q8_0.gguf
 ```
 
 #### Import a Wikilite Database
 ```bash
-./cronotopia --db cronotopia.db --import-wikilite ./wikilite-en.db
+./build/cronotopia --db cronotopia.db --import-wikilite ./wikilite-en.db
 ```
 
 ---
@@ -115,10 +131,10 @@ Cronotopia supports transparent, zero-extraction reading from seekable Zstandard
 
 ```bash
 # Compress cronotopia.db -> cronotopia.db.zst
-./cronotopia --db cronotopia.db --compress
+./build/cronotopia --db cronotopia.db --compress
 
 # Decompress cronotopia.db.zst -> cronotopia.db
-./cronotopia --db cronotopia.db.zst --decompress
+./build/cronotopia --db cronotopia.db.zst --decompress
 ```
 
 > **Note:** Compressed databases (`.zst`) are strictly read-only. Data ingestion and `--ai-sync` require an uncompressed database.
@@ -131,10 +147,10 @@ To generate embeddings and compute the ANN index for imported sections:
 
 ```bash
 # Using local pure-Go inference
-./cronotopia --db cronotopia.db --ai-sync --ai-ann
+./build/cronotopia --db cronotopia.db --ai-sync --ai-ann
 
 # Using an accelerated external OpenAI-compatible embedding API (recommended for large datasets)
-./cronotopia --db cronotopia.db --ai-sync \
+./build/cronotopia --db cronotopia.db --ai-sync \
   --ai-api --ai-api-url "http://localhost:8080/v1/embeddings" \
   --ai-model "Qwen3-Embedding-0.6B-Q8_0"
 ```
@@ -146,7 +162,7 @@ To generate embeddings and compute the ANN index for imported sections:
 Inspect the database and all attached modular schemas using the embedded SQLite shell:
 
 ```bash
-./cronotopia --db cronotopia.db --db-shell
+./build/cronotopia --db cronotopia.db --db-shell
 ```
 
 ---
@@ -156,23 +172,28 @@ Inspect the database and all attached modular schemas using the embedded SQLite 
 #### Monolithic Database
 ```bash
 # Standard SQLite file
-./cronotopia --db cronotopia.db --web-host 127.0.0.1 --web-port 35248
+./build/cronotopia --db cronotopia.db --web-host 127.0.0.1 --web-port 35248
 
 # Direct read-only execution on compressed database
-./cronotopia --db cronotopia.db.zst --web-host 127.0.0.1 --web-port 35248
+./build/cronotopia --db cronotopia.db.zst --web-host 127.0.0.1 --web-port 35248
 ```
 
-#### Modular Attached Databases
-You can keep databases separated and attach them simultaneously at startup:
+#### Modular Attached Databases (`--db-add`)
+You can keep databases separated and attach multiple modular datasets simultaneously using the repeatable `--db-add` flag. Roles are automatically detected from the database contents:
+
 ```bash
-./cronotopia \
-  --db app.db \
-  --db-corpus /data/corpus.db.zst \
-  --db-ai /data/qwen3-ai.db \
-  --db-map /data/map-tiles.db.zst \
-  --db-elevation /data/elevations.db.zst \
-  --db-media /data/media.db \
+./build/cronotopia \
+  --db cronotopia.db.zst \
+  --db-add /data/map-zoom9.db.zst \
+  --db-add /data/elevation-arc30-zoom7.db.zst \
+  --db-add /data/corpus-italian-ann64.db.zst \
+  --db-add /data/media.db.zst \
   --web-host 0.0.0.0 --web-port 35248
+```
+
+Or using comma-separated paths:
+```bash
+./build/cronotopia --db cronotopia.db.zst --db-add map.db.zst,elevation.db.zst,media.db.zst
 ```
 
 The web UI will be available at `http://localhost:35248`.
@@ -184,11 +205,7 @@ The web UI will be available at `http://localhost:35248`.
 | Flag | Default | Description |
 | :--- | :--- | :--- |
 | `--db` | `cronotopia.db` | Primary SQLite database path (supports `.db` or `.zst`). |
-| `--db-ai` | `""` | Path to attached AI model database (`ai_db`). |
-| `--db-map` | `""` | Path to attached map tiles database (`map_db`). |
-| `--db-media` | `""` | Path to attached media database (`media_db`). |
-| `--db-corpus` | `""` | Path to attached corpus database (`corpus_db`). |
-| `--db-elevation` | `""` | Path to attached elevation tiles database (`elevation_db`). |
+| `--db-add` | `""` | Additional database(s) to attach (repeatable or comma-separated, `.db` or `.zst`). Roles are autodetected. |
 | `--db-shell` | `false` | Start interactive SQLite shell and exit. |
 | `--compress` | `false` | Compress `--db` to seekable Zstandard (`.zst`). |
 | `--decompress` | `false` | Decompress `--db` from seekable Zstandard (`.zst`). |
