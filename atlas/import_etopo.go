@@ -426,7 +426,7 @@ type sampleCoord struct {
 	frac   float32
 }
 
-func ImportETOPO(conn *sqlite.Conn, filePath string, workers int) error {
+func ImportETOPO(conn *sqlite.Conn, filePath string, maxZoom, workers int) error {
 	log.Printf("Reading ETOPO GeoTIFF: %s", filePath)
 	start := time.Now()
 
@@ -444,12 +444,11 @@ func ImportETOPO(conn *sqlite.Conn, filePath string, workers int) error {
 
 	_ = sqlitex.Execute(conn, "DELETE FROM main.elevations", nil)
 
-	const maxZ = 7
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
 
-	for z := 0; z <= maxZ; z++ {
+	for z := 0; z <= maxZoom; z++ {
 		worldSize := 256 * (1 << z)
 		cols := make([]sampleCoord, worldSize)
 		rows := make([]sampleCoord, worldSize)
