@@ -2,25 +2,25 @@
 
 An offline-first spatio-temporal database engine, media server, and interactive 3D map visualization platform written in Go.
 
-Cronotopia indexes historical entities from Wikidata, full-text encyclopedic articles from Wikipedia, literature, and interactive musical scores, alongside vector map tiles and global digital elevation models (DEM). It includes a pure Go neural inference engine for quantized GGUF vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, vector tiles, elevation rasters, and media objects can reside in a single monolithic SQLite database or across modular, attached databases.
+Cronotopia indexes historical entities from Wikidata, full-text encyclopedic articles from Wikipedia, literature, and interactive musical scores, alongside vector map tiles and global digital elevation models. It includes a pure Go neural inference engine for vector embeddings. All records, full-text indices, geospatial R*Trees, vector embeddings, ANN index clusters, GGUF model weights, vector tiles, elevation rasters, and media objects can reside in a single monolithic SQLite database or across modular, attached databases.
 
 ## Overview
 
 Cronotopia is engineered to query historical events, encyclopedic knowledge, literature, musical scores, and geographic data without internet access or external runtime dependencies. It combines historical entity extraction, full-text article search, digital media delivery, 3D terrain elevation, and an integrated vector tile server into a unified binary.
 
-The system includes a pure Go execution engine for quantized embedding models, enabling semantic and hybrid search locally on CPU without external C libraries. In addition to a responsive web interface and REST API, Cronotopia implements a Model Context Protocol (MCP) server for deep integration with AI tools and autonomous agents.
+The system includes a pure Go execution engine for quantized embedding models, enabling semantic and hybrid search locally on CPU without external libraries. In addition to a responsive web interface and REST API, Cronotopia implements a Model Context Protocol (MCP) server for deep integration with AI tools and autonomous agents.
 
 ## Architecture
 
 Cronotopia is structured around four orthogonal domain packages, a virtual file system layer, and an HTTP/API layer:
 
-*   **`acta`:** The 4D Spatiotemporal Knowledge Graph. Ingests Wikidata dumps, manages entities, computes Julian day calendar mathematics, builds geospatial R\*Tree indices, and executes space-time event queries (`SearchEvents`).
+*   **`acta`:** The 4D Spatiotemporal Knowledge Graph. Ingests Wikidata dumps, manages entities, computes Julian day calendar mathematics, builds geospatial R\*Tree indices, and executes space-time event queries.
 *   **`atlas`:** Cartographic substrate. Manages vector map tiles (PMTiles), raster elevation heightmaps (NOAA ETOPO DEM), MVT Protocol Buffer parsing, and geometric calculations (Haversine distance, bounding boxes, tile coordinates).
-*   **`corpus`:** Encyclopedic text and semantic search. Manages Wikipedia articles, SQLite FTS5 full-text indices, GGUF model ingestion, native Q8_0 transformer inference (Qwen3), vector embeddings, Approximate Nearest Neighbor (ANN) clustering, and Reciprocal Rank Fusion (RRF) hybrid search.
-*   **`media`:** Primary document archives. Stores and streams paginated books, interactive musical scores (MusicXML), and audio with HTTP byte-range request support.
+*   **`corpus`:** Encyclopedic text and semantic search. Manages Wikipedia articles, SQLite FTS5 full-text indices, GGUF model ingestion, native transformer inference (Qwen3), vector embeddings, Approximate Nearest Neighbor (ANN) clustering, and Reciprocal Rank Fusion (RRF) hybrid search.
+*   **`media`:** Primary document archives. Stores and streams paginated books and interactive musical scores (MusicXML) with HTTP byte-range request support.
 *   **`vfs`:** Transparent, zero-extraction, random-access virtual file system for seekable compressed Zstandard (`.zst`) SQLite files.
 *   **`web`:** Standalone web presentation and API layer. Embeds frontend assets (MapLibre GL, alphaTab, fonts), provides unified REST endpoints, and exposes the Model Context Protocol (MCP) server.
-*   **`cmd/cronotopia`:** Minimal command-line interface entrypoint.
+*   **`cmd`:** Minimal command-line interface entrypoint.
 
 ## Key Features
 
@@ -100,7 +100,7 @@ Cronotopia operates in one of five modes:
 
 #### Import ETOPO Elevation Data
 ```bash
-./build/cronotopia --db cronotopia.db --import-etopo ./ETOPO_2022_v1_30s_N90W180_surface.tif
+./build/cronotopia --db cronotopia.db --import-etopo ./ETOPO_2022_v1_30s_N90W180_surface.tif --zoom 7
 ```
 
 #### Import Wikipedia HTML Dump
@@ -149,7 +149,7 @@ To generate embeddings and compute the ANN index for imported sections:
 # Using local pure-Go inference
 ./build/cronotopia --db cronotopia.db --ai-sync --ai-ann
 
-# Using an accelerated external OpenAI-compatible embedding API (recommended for large datasets)
+# Using an accelerated external OpenAI-compatible embedding API (highly recommended for large datasets)
 ./build/cronotopia --db cronotopia.db --ai-sync \
   --ai-api --ai-api-url "http://localhost:8080/v1/embeddings" \
   --ai-model "Qwen3-Embedding-0.6B-Q8_0"
@@ -206,11 +206,11 @@ The web UI will be available at `http://localhost:35248`.
 | :--- | :--- | :--- |
 | `--db` | `cronotopia.db` | Primary SQLite database path (supports `.db` or `.zst`). |
 | `--db-add` | `""` | Additional database(s) to attach (repeatable or comma-separated, `.db` or `.zst`). Roles are autodetected. |
-| `--db-shell` | `false` | Start interactive SQLite shell and exit. |
+| `--db-shell` | `false` | Start interactive SQLite shell. |
 | `--compress` | `false` | Compress `--db` to seekable Zstandard (`.zst`). |
 | `--decompress` | `false` | Decompress `--db` from seekable Zstandard (`.zst`). |
 | `--threads` | `0` | Number of worker threads (0 = number of CPU cores). |
-| `--zoom` | `12` | Max zoom level for PMTiles import. |
+| `--zoom` | `12` | Max zoom level for PMTiles/ETOPO import. |
 | `--web-host` | `127.0.0.1` | Web and API server listen host. |
 | `--web-port` | `35248` | Web and API server listen port. |
 | `--import-wikidata` | `""` | Path or URL to Wikidata dump (`.json`, `.gz`, `.bz2`). |
@@ -228,7 +228,7 @@ The web UI will be available at `http://localhost:35248`.
 | `--ai-api-url` | `http://localhost:9931/v1/embeddings` | Embeddings API endpoint URL. |
 | `--ai-api-key` | `""` | API key for external embedding provider. |
 | `--ai-model` | `Qwen3-Embedding-0.6B-Q8_0` | Model identifier string. |
-| `--ai-model-prefix-search`| `Instruct: Retrieve relevant passages\nQuery: ` | Prefix for query embeddings. |
+| `--ai-model-prefix-search`| `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ` | Prefix for query embeddings. |
 | `--ai-model-prefix-save`  | `""` | Prefix for stored passage embeddings. |
 | `--log` | `false` | Enable application logging. |
 | `--log-file` | `""` | Write application log output to a file. |
@@ -266,10 +266,10 @@ Searches across historical events, entity labels, Wikipedia sections, and media 
 **Example:**
 ```bash
 # Search events around Alexandria in 48 BCE
-curl "http://localhost:35248/api?latitude=31.2001&longitude=29.9187&radius=50&year=-48"
+curl "http://localhost:35248/api/search?latitude=31.2001&longitude=29.9187&radius=50&year=-48"
 
 # Hybrid text and geographic search
-curl "http://localhost:35248/api?query=Archimedes&latitude=37.0755&longitude=15.2866"
+curl "http://localhost:35248/api/search?query=Archimedes&latitude=37.0755&longitude=15.2866"
 ```
 
 ---
@@ -384,3 +384,4 @@ Cronotopia exposes a standard Model Context Protocol endpoint at `/mcp` supporti
 *   **[MapLibre GL](https://maplibre.org/):** Client-side vector map renderer and 3D terrain engine.
 *   **[SQLite](https://www.sqlite.org/):** Embedded storage engine.
 *   **[Qwen Team](https://github.com/QwenLM):** Base embedding model architecture.
+

@@ -55,7 +55,7 @@ func main() {
 	flag.StringVar(&options.aiApiUrl, "ai-api-url", "http://localhost:9931/v1/embeddings", "AI API URL")
 	flag.StringVar(&options.aiModel, "ai-model", "Qwen3-Embedding-0.6B-Q8_0", "Model identifier")
 	flag.StringVar(&options.aiModelPrefixSave, "ai-model-prefix-save", "", "Prefix for passage embeddings")
-	flag.StringVar(&options.aiModelPrefixSearch, "ai-model-prefix-search", "Instruct: Retrieve relevant passages\nQuery: ", "Prefix for query embeddings")
+	flag.StringVar(&options.aiModelPrefixSearch, "ai-model-prefix-search", "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ", "Prefix for query embeddings")
 	flag.BoolVar(&options.aiCache, "ai-cache", false, "Keep model weights cached in RAM")
 
 	flag.IntVar(&options.threads, "threads", 0, "Number of CPU threads to use (0 = auto)")
