@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"cronotopia/atlas"
+	"cronotopia/corpus"
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -18,15 +20,15 @@ func SearchEvents(conn *sqlite.Conn, p SearchParams) ([]EventResult, error) {
 	hasSpace := p.HasSpace || (p.Lat != 0 || p.Lon != 0)
 	hasTime := p.HasTime || (p.Year != 0 || p.Month != 0 || p.Day != 0)
 
-	rtreeSchema := TableSchema(conn, "entity_places_rtree")
-	placeSchema := TableSchema(conn, "entity_places")
-	timeSchema := TableSchema(conn, "entity_times")
-	entSchema := TableSchema(conn, "entities")
+	rtreeSchema := vfs.TableSchema(conn, "entity_places_rtree")
+	placeSchema := vfs.TableSchema(conn, "entity_places")
+	timeSchema := vfs.TableSchema(conn, "entity_times")
+	entSchema := vfs.TableSchema(conn, "entities")
 
-	if hasSpace && !HasSchemaTable(conn, rtreeSchema, "entity_places_rtree") {
+	if hasSpace && !vfs.HasSchemaTable(conn, rtreeSchema, "entity_places_rtree") {
 		hasSpace = false
 	}
-	if hasTime && !HasSchemaTable(conn, timeSchema, "entity_times") {
+	if hasTime && !vfs.HasSchemaTable(conn, timeSchema, "entity_times") {
 		hasTime = false
 	}
 
@@ -363,17 +365,17 @@ func SearchEvents(conn *sqlite.Conn, p SearchParams) ([]EventResult, error) {
 }
 
 func SearchEntityLabels(conn *sqlite.Conn, searchQuery string, limit int, searchParams ...SearchParams) ([]SearchResult, error) {
-	sanitized := SanitizeFTSQuery(searchQuery)
+	sanitized := corpus.SanitizeQuery(searchQuery)
 	if sanitized == "" {
 		return nil, nil
 	}
 
-	ftsSchema := TableSchema(conn, "entity_label_search")
-	if !HasSchemaTable(conn, ftsSchema, "entity_label_search") {
+	ftsSchema := vfs.TableSchema(conn, "entity_label_search")
+	if !vfs.HasSchemaTable(conn, ftsSchema, "entity_label_search") {
 		return nil, nil
 	}
 
-	entSchema := TableSchema(conn, "entities")
+	entSchema := vfs.TableSchema(conn, "entities")
 
 	var p SearchParams
 	if len(searchParams) > 0 {
@@ -464,7 +466,7 @@ func SearchEntityLabels(conn *sqlite.Conn, searchQuery string, limit int, search
 				Title:     title,
 				Text:      desc,
 				Snippet:   snip,
-				Power:     NormalizeBM25(stmt.ColumnFloat(5)),
+				Power:     corpus.NormalizeBM25(stmt.ColumnFloat(5)),
 				Lat:       info.Lat,
 				Lon:       info.Lon,
 				Year:      info.YearBegin,
@@ -487,6 +489,206 @@ func SearchEntityLabels(conn *sqlite.Conn, searchQuery string, limit int, search
 
 	if err != nil && !errors.Is(err, ErrDone) {
 		return nil, err
+	}
+	return results, nil
+}
+
+func EnrichMatches(conn *sqlite.Conn, matches []corpus.SectionMatch, matchType string, p SearchParams) []SearchResult {
+	hasSpace := p.HasSpace || (p.Lat != 0 || p.Lon != 0)
+	hasTime := p.HasTime || (p.Year != 0 || p.Month != 0 || p.Day != 0)
+
+	var results []SearchResult
+	seenEntity := make(map[int]bool)
+
+	for _, m := range matches {
+		if seenEntity[m.EntityID] {
+			continue
+		}
+
+		info := GetEntityInfo(conn, m.EntityID, p.Lat, p.Lon)
+		matchCode := 0
+		if hasSpace {
+			if !info.HasCoord || atlas.HaversineDistance(p.Lat, p.Lon, info.Lat, info.Lon) > p.RadiusKm {
+				continue
+			}
+			matchCode = info.Code
+		}
+		if hasTime {
+			matched, code := MatchesTime(conn, m.EntityID, p)
+			if !matched {
+				continue
+			}
+			matchCode = code
+		}
+
+		seenEntity[m.EntityID] = true
+		results = append(results, SearchResult{
+			EntityID:  m.EntityID,
+			ArticleID: m.ArticleID,
+			Title:     m.Title,
+			Text:      m.Content,
+			Snippet:   m.Snippet,
+			Power:     m.Score,
+			Lat:       info.Lat,
+			Lon:       info.Lon,
+			Year:      info.YearBegin,
+			Code:      matchCode,
+			DateBegin: info.DateBegin,
+			DateEnd:   info.DateEnd,
+			Times:     info.Times,
+			Places:    info.Places,
+			Media:     info.Media,
+			Type:      matchType,
+		})
+
+		if p.Limit > 0 && len(results) >= p.Limit {
+			break
+		}
+	}
+	return results
+}
+
+func SearchHybrid(conn *sqlite.Conn, eng *corpus.Engine, query string, limit int, searchParams ...SearchParams) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	var p SearchParams
+	if len(searchParams) > 0 {
+		p = searchParams[0]
+	}
+
+	candidateLimit := limit * 6
+	if candidateLimit < 60 {
+		candidateLimit = 60
+	}
+	if p.HasSpace || p.HasTime || (p.Lat != 0 || p.Lon != 0) || (p.Year != 0 || p.Month != 0 || p.Day != 0) {
+		candidateLimit = MaxSearchCandidates
+	}
+
+	var lastErr error
+	entResults, err := SearchEntityLabels(conn, query, limit, p)
+	if err != nil {
+		lastErr = err
+	}
+
+	var lexResults []SearchResult
+	rawLex, err := corpus.SearchLexical(conn, query, candidateLimit)
+	if err != nil {
+		lastErr = err
+	} else {
+		lexResults = EnrichMatches(conn, rawLex, "L", p)
+	}
+
+	var semResults []SearchResult
+	if eng != nil {
+		rawSem, err := corpus.SearchVectors(conn, eng, query, candidateLimit)
+		if err != nil {
+			lastErr = err
+		} else {
+			semResults = EnrichMatches(conn, rawSem, "S", p)
+		}
+	}
+
+	type candidate struct {
+		item     SearchResult
+		rrfScore float64
+	}
+
+	candMap := make(map[int]*candidate)
+	const kRRF = 60.0
+
+	mergeList := func(results []SearchResult) {
+		for rank, res := range results {
+			if res.EntityID == 0 {
+				continue
+			}
+			scoreBonus := 1.0 / (kRRF + float64(rank+1))
+
+			if existing, ok := candMap[res.EntityID]; ok {
+				existing.rrfScore += scoreBonus
+
+				if strings.Contains(res.Snippet, "<mark>") || (len(res.Snippet) > len(existing.item.Snippet) && !strings.Contains(existing.item.Snippet, "<mark>")) {
+					existing.item.Snippet = res.Snippet
+				}
+				if existing.item.Text == "" && res.Text != "" {
+					existing.item.Text = res.Text
+				}
+				if existing.item.Lat == 0 && res.Lat != 0 {
+					existing.item.Lat = res.Lat
+					existing.item.Lon = res.Lon
+				}
+				if existing.item.Year == 0 && res.Year != 0 {
+					existing.item.Year = res.Year
+				}
+				if existing.item.DateBegin == "" && res.DateBegin != "" {
+					existing.item.DateBegin = res.DateBegin
+					existing.item.DateEnd = res.DateEnd
+				}
+				if len(existing.item.Times) == 0 && len(res.Times) > 0 {
+					existing.item.Times = res.Times
+				}
+				if len(existing.item.Places) == 0 && len(res.Places) > 0 {
+					existing.item.Places = res.Places
+				}
+				if existing.item.ArticleID == 0 && res.ArticleID != 0 {
+					existing.item.ArticleID = res.ArticleID
+				}
+				if len(existing.item.Media) == 0 && len(res.Media) > 0 {
+					existing.item.Media = res.Media
+				}
+				existing.item.Type = "H"
+			} else {
+				candMap[res.EntityID] = &candidate{
+					item:     res,
+					rrfScore: scoreBonus,
+				}
+			}
+		}
+	}
+
+	mergeList(entResults)
+	mergeList(lexResults)
+	mergeList(semResults)
+
+	merged := make([]*candidate, 0, len(candMap))
+	for _, c := range candMap {
+		merged = append(merged, c)
+	}
+
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].rrfScore > merged[j].rrfScore
+	})
+
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+
+	maxPossibleRRF := 0.0
+	numActiveLists := 0
+	if len(entResults) > 0 {
+		numActiveLists++
+	}
+	if len(lexResults) > 0 {
+		numActiveLists++
+	}
+	if len(semResults) > 0 {
+		numActiveLists++
+	}
+	if numActiveLists > 0 {
+		maxPossibleRRF = float64(numActiveLists) / (kRRF + 1.0)
+	}
+
+	results := make([]SearchResult, len(merged))
+	for i, c := range merged {
+		if maxPossibleRRF > 0 {
+			c.item.Power = (c.rrfScore / maxPossibleRRF) * 100.0
+		}
+		results[i] = c.item
+	}
+
+	if len(results) == 0 && lastErr != nil {
+		return []SearchResult{}, lastErr
 	}
 	return results, nil
 }

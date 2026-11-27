@@ -15,60 +15,24 @@ import (
 	"cronotopia/atlas"
 	"cronotopia/corpus"
 	"cronotopia/media"
-	"zombiezen.com/go/sqlite"
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
 type Server struct {
-	pool   *sqlitex.Pool
-	engine *corpus.Engine
+	pool    *sqlitex.Pool
+	engine  *corpus.Engine
+	name    string
+	version string
 }
 
-func NewServer(pool *sqlitex.Pool, engine *corpus.Engine) *Server {
+func NewServer(pool *sqlitex.Pool, engine *corpus.Engine, name, version string) *Server {
 	return &Server{
-		pool:   pool,
-		engine: engine,
+		pool:    pool,
+		engine:  engine,
+		name:    name,
+		version: version,
 	}
-}
-
-func (s *Server) tableSchema(conn *sqlite.Conn, table string) string {
-	candidates := []string{"corpus_db", "map_db", "elevation_db", "media_db", "main"}
-	for _, sc := range candidates {
-		var exists bool
-		_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name = ? LIMIT 1", &sqlitex.ExecOptions{
-			Args: []any{sc, table},
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				exists = true
-				return nil
-			},
-		})
-		if exists {
-			var hasRow bool
-			_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT 1 FROM %s.%s LIMIT 1", sc, table), &sqlitex.ExecOptions{
-				ResultFunc: func(stmt *sqlite.Stmt) error {
-					hasRow = true
-					return nil
-				},
-			})
-			if hasRow {
-				return sc
-			}
-		}
-	}
-	for _, sc := range candidates {
-		var exists bool
-		_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name = ? LIMIT 1", &sqlitex.ExecOptions{
-			Args: []any{sc, table},
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				exists = true
-				return nil
-			},
-		})
-		if exists {
-			return sc
-		}
-	}
-	return "main"
 }
 
 func (s *Server) Routes() http.Handler {
@@ -95,7 +59,7 @@ func (s *Server) Routes() http.Handler {
 
 		if entStr := q.Get("entity_id"); entStr != "" {
 			if id, _ := strconv.Atoi(entStr); id > 0 {
-				article, err := corpus.GetArticleByEntity(conn, id)
+				article, err := acta.GetArticleByEntity(conn, id)
 				if err != nil {
 					http.Error(w, err.Error(), 404)
 					return
@@ -108,7 +72,7 @@ func (s *Server) Routes() http.Handler {
 
 		if artStr := q.Get("article_id"); artStr != "" {
 			if id, _ := strconv.Atoi(artStr); id > 0 {
-				article, err := corpus.GetArticleByArticle(conn, id)
+				article, err := acta.GetArticle(conn, id)
 				if err != nil {
 					http.Error(w, err.Error(), 404)
 					return
@@ -121,7 +85,7 @@ func (s *Server) Routes() http.Handler {
 
 		if idStr := q.Get("id"); idStr != "" {
 			if id, _ := strconv.Atoi(idStr); id > 0 {
-				article, err := corpus.GetArticle(conn, id)
+				article, err := acta.GetArticle(conn, id)
 				if err != nil {
 					http.Error(w, err.Error(), 404)
 					return
@@ -224,18 +188,36 @@ func (s *Server) Routes() http.Handler {
 		var results []acta.SearchResult
 		var err error
 
+		candidateLimit := limit * 6
+		if candidateLimit < 60 {
+			candidateLimit = 60
+		}
+		if hasSpace || hasTime {
+			candidateLimit = acta.MaxSearchCandidates
+		}
+
 		if mode == "semantic" {
 			if s.engine == nil {
 				http.Error(w, "Semantic search unavailable: AI model is not loaded", http.StatusBadRequest)
 				return
 			}
-			results, err = corpus.SearchVectors(conn, s.engine, query, limit, params)
+			raw, err := corpus.SearchVectors(conn, s.engine, query, candidateLimit)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			results = acta.EnrichMatches(conn, raw, "S", params)
 		} else if mode == "lexical" {
-			results, err = corpus.SearchLexical(conn, query, limit, params)
+			raw, err := corpus.SearchLexical(conn, query, candidateLimit)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			results = acta.EnrichMatches(conn, raw, "L", params)
 		} else if mode == "entity" {
 			results, err = acta.SearchEntityLabels(conn, query, limit, params)
 		} else {
-			results, err = corpus.SearchHybrid(conn, s.engine, query, limit, params)
+			results, err = acta.SearchHybrid(conn, s.engine, query, limit, params)
 		}
 
 		if err != nil {
@@ -295,7 +277,7 @@ func (s *Server) handleTiles(w http.ResponseWriter, r *http.Request) {
 	defer s.pool.Put(conn)
 
 	if isElevation {
-		schema := s.tableSchema(conn, "elevations")
+		schema := vfs.TableSchema(conn, "elevations")
 		data, err := atlas.GetElevationTileData(conn, schema, z, x, y)
 		if err != nil || len(data) == 0 {
 			http.NotFound(w, r)
@@ -307,7 +289,7 @@ func (s *Server) handleTiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	schema := s.tableSchema(conn, "tiles")
+	schema := vfs.TableSchema(conn, "tiles")
 	data, err := atlas.GetTileData(conn, schema, z, x, y)
 	if err != nil || len(data) == 0 {
 		http.NotFound(w, r)
@@ -370,7 +352,7 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.pool.Put(conn)
 
-	schema := s.tableSchema(conn, "media")
+	schema := vfs.TableSchema(conn, "media")
 	data, totalLen, mode, err := media.Get(conn, schema, id, offset, length)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -425,8 +407,7 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 	defer s.pool.Put(conn)
 
 	q := r.URL.Query()
-	settingsSchema := s.tableSchema(conn, "settings")
-	mapSchema := s.tableSchema(conn, "tiles")
+	mapSchema := vfs.TableSchema(conn, "tiles")
 
 	if idStr := q.Get("id"); idStr != "" {
 		latStr := q.Get("latitude")
@@ -442,7 +423,7 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 		zoomStr := q.Get("zoom")
 		zoom, err := strconv.Atoi(zoomStr)
 		if zoomStr == "" || err != nil || zoom < 0 {
-			zoom = atlas.GetMapConfig(conn, settingsSchema).MaxZoom
+			zoom = atlas.GetMapConfig(conn).MaxZoom
 		}
 
 		minLat, maxLat, minLon, maxLon := atlas.BoundingBox(lat, lon, rad/1000.0)
@@ -476,7 +457,7 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 		zoomStr := q.Get("zoom")
 		zoom, err := strconv.Atoi(zoomStr)
 		if zoomStr == "" || err != nil || zoom < 0 {
-			zoom = atlas.GetMapConfig(conn, settingsSchema).MaxZoom
+			zoom = atlas.GetMapConfig(conn).MaxZoom
 		}
 
 		centroids, err := atlas.ExtractTileCentroids(conn, mapSchema, lat, lon, rad, zoom)
@@ -493,7 +474,7 @@ func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := atlas.GetMapConfig(conn, settingsSchema)
+	cfg := atlas.GetMapConfig(conn)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(cfg)
 }

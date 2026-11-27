@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"cronotopia/acta"
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -119,25 +119,14 @@ func (e *Engine) Init(conn *sqlite.Conn) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	schema := acta.TableSchema(conn, "tensors")
+	schema := vfs.TableSchema(conn, "tensors")
 	if !HasModel(conn, schema) {
 		return fmt.Errorf("no AI model found in database")
 	}
 
-	metaTbl := "settings"
-	if schema != "" && schema != "main" {
-		metaTbl = schema + ".settings"
-	}
-
-	var metaJSON string
-	err := sqlitex.Execute(conn, fmt.Sprintf("SELECT value FROM %s WHERE key = 'ai_metadata' LIMIT 1", metaTbl), &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			metaJSON = stmt.ColumnText(0)
-			return nil
-		},
-	})
-	if err != nil || metaJSON == "" {
-		return fmt.Errorf("ai_metadata not found in database: %w", err)
+	metaJSON := vfs.GetSetting(conn, "ai_metadata")
+	if metaJSON == "" {
+		return fmt.Errorf("ai_metadata not found in database")
 	}
 
 	var meta map[string]any
@@ -302,19 +291,37 @@ func (e *Engine) ProcessEmbeddings(pool *sqlitex.Pool) error {
 		})
 
 		endTx, txErr := sqlitex.ImmediateTransaction(conn)
-		if txErr == nil {
-			for _, item := range items {
-				emb, err := e.Embeddings(e.config.ModelPrefixSave + item.text)
-				if err != nil {
-					continue
-				}
-				_ = sqlitex.Execute(conn, "INSERT OR REPLACE INTO vectors (id, embedding) VALUES (?, ?)", &sqlitex.ExecOptions{
-					Args: []any{item.id, Float32ToBytes(emb)},
-				})
-			}
-			endTx(&txErr)
+		if txErr != nil {
+			log.Printf("Transaction start error: %v", txErr)
+			continue
 		}
-		log.Printf("Embedding progress: %d/%d (%.1f%%)", end, total, float64(end)/float64(total)*100.0)
+
+		inserted := 0
+		for _, item := range items {
+			emb, err := e.Embeddings(e.config.ModelPrefixSave + item.text)
+			if err != nil {
+				log.Printf("Embedding error for section %d: %v", item.id, err)
+				continue
+			}
+			if len(emb) == 0 {
+				continue
+			}
+			insertErr := sqlitex.Execute(conn, "INSERT OR REPLACE INTO vectors (id, embedding) VALUES (?, ?)", &sqlitex.ExecOptions{
+				Args: []any{item.id, Float32ToBytes(emb)},
+			})
+			if insertErr != nil {
+				log.Printf("Vector insert error for section %d: %v", item.id, insertErr)
+			} else {
+				inserted++
+			}
+		}
+
+		var commitErr error
+		endTx(&commitErr)
+		if commitErr != nil {
+			log.Printf("Transaction commit error: %v", commitErr)
+		}
+		log.Printf("Embedding progress: %d/%d (%.1f%%) — %d vectors written", end, total, float64(end)/float64(total)*100.0, inserted)
 	}
 
 	if e.config.Ann {
@@ -474,8 +481,8 @@ func (e *Engine) ProcessANN(conn *sqlite.Conn) error {
 }
 
 func (e *Engine) HasANN(conn *sqlite.Conn) bool {
-	schema := acta.TableSchema(conn, "vectors_ann_index")
-	return acta.HasSchemaTable(conn, schema, "vectors_ann_index")
+	schema := vfs.TableSchema(conn, "vectors_ann_index")
+	return vfs.HasSchemaTable(conn, schema, "vectors_ann_index")
 }
 
 func (e *Engine) SearchAnn(conn *sqlite.Conn, vectors []float32, size int, limit int) ([]VectorDistance, error) {
@@ -487,9 +494,9 @@ func (e *Engine) SearchAnn(conn *sqlite.Conn, vectors []float32, size int, limit
 	copy(mrlQuery, vectors[:size])
 	l2Norm(mrlQuery)
 
-	centSchema := acta.TableSchema(conn, "vectors_ann_centroids")
-	chunkSchema := acta.TableSchema(conn, "vectors_ann_chunks")
-	linkSchema := acta.TableSchema(conn, "vectors_ann_centroid_chunks")
+	centSchema := vfs.TableSchema(conn, "vectors_ann_centroids")
+	chunkSchema := vfs.TableSchema(conn, "vectors_ann_chunks")
+	linkSchema := vfs.TableSchema(conn, "vectors_ann_centroid_chunks")
 
 	type centroidDist struct {
 		id   int

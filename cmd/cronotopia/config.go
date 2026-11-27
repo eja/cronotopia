@@ -24,8 +24,7 @@ func (s *stringSlice) Set(val string) error {
 }
 
 type Config struct {
-	dbPath              string
-	dbAdd               stringSlice
+	dbPath              stringSlice
 	dbShell             bool
 	compress            bool
 	decompress          bool

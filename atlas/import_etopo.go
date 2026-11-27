@@ -427,6 +427,9 @@ type sampleCoord struct {
 }
 
 func ImportETOPO(conn *sqlite.Conn, filePath string, maxZoom, workers int) error {
+	if maxZoom > 8 {
+		maxZoom = 8
+	}
 	log.Printf("Reading ETOPO GeoTIFF: %s", filePath)
 	start := time.Now()
 
@@ -435,8 +438,8 @@ func ImportETOPO(conn *sqlite.Conn, filePath string, maxZoom, workers int) error
 		return fmt.Errorf("failed to load etopo geotiff: %w", err)
 	}
 
-	log.Printf("Loaded %dx%d raster in %s. Generating smooth interpolated tiles (Zoom 0-7)...",
-		grid.width, grid.height, time.Since(start).Round(time.Millisecond))
+	log.Printf("Loaded %dx%d raster in %s. Generating smooth interpolated tiles (Zoom 0-%d)...",
+		grid.width, grid.height, time.Since(start).Round(time.Millisecond), maxZoom)
 
 	if err := InitElevationSchema(conn); err != nil {
 		return err

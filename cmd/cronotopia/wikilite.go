@@ -1,6 +1,6 @@
 // Copyright (C) by Ubaldo Porcheddu <ubaldo@eja.it>
 
-package corpus
+package main
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"log"
 
 	"cronotopia/acta"
+	"cronotopia/corpus"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -23,7 +24,7 @@ func ImportWikilite(pool *sqlitex.Pool, srcDBPath string) error {
 	if err := acta.InitSchema(conn); err != nil {
 		return err
 	}
-	if err := InitSchema(conn); err != nil {
+	if err := corpus.InitSchema(conn); err != nil {
 		return err
 	}
 
@@ -167,10 +168,6 @@ func ImportWikilite(pool *sqlitex.Pool, srcDBPath string) error {
 	if err != nil {
 		return fmt.Errorf("FTS5 section_search rebuild error: %w", err)
 	}
-	err = sqlitex.Execute(conn, "INSERT INTO main.entity_label_search(entity_label_search) VALUES('rebuild')", nil)
-	if err != nil {
-		return fmt.Errorf("FTS5 entity_label_search rebuild error: %w", err)
-	}
 
 	endTx(&err)
 	endTx = nil
@@ -180,7 +177,7 @@ func ImportWikilite(pool *sqlitex.Pool, srcDBPath string) error {
 
 	if len(ggufBlob) > 0 {
 		log.Printf("Importing embedded GGUF model (%d bytes)...", len(ggufBlob))
-		if err := ImportGGUFReader(conn, bytes.NewReader(ggufBlob)); err != nil {
+		if err := corpus.ImportGGUFReader(conn, bytes.NewReader(ggufBlob)); err != nil {
 			return fmt.Errorf("import embedded gguf error: %w", err)
 		}
 	}

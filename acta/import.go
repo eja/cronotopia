@@ -145,10 +145,6 @@ type wrappedReadCloser struct {
 	io.Closer
 }
 
-func (w *wrappedReadCloser) Read(p []byte) (int, error) {
-	return w.Reader.Read(p)
-}
-
 func parseID(s string) (int, bool) {
 	if len(s) < 2 {
 		return 0, false

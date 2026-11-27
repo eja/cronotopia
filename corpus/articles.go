@@ -5,22 +5,16 @@ package corpus
 import (
 	"fmt"
 
-	"cronotopia/acta"
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
 type ArticleResult struct {
-	ID        int                    `json:"id"`
-	Title     string                 `json:"title,omitempty"`
-	EntityID  int                    `json:"entity_id,omitempty"`
-	Sections  []ArticleResultSection `json:"sections,omitempty"`
-	Latitude  float64                `json:"latitude,omitempty"`
-	Longitude float64                `json:"longitude,omitempty"`
-	Year      int                    `json:"year,omitempty"`
-	DateBegin string                 `json:"date_begin,omitempty"`
-	DateEnd   string                 `json:"date_end,omitempty"`
-	Media     []any                  `json:"media,omitempty"`
+	ID       int                    `json:"id"`
+	Title    string                 `json:"title,omitempty"`
+	EntityID int                    `json:"entity_id,omitempty"`
+	Sections []ArticleResultSection `json:"sections,omitempty"`
 }
 
 type ArticleResultSection struct {
@@ -30,8 +24,8 @@ type ArticleResultSection struct {
 }
 
 func GetArticleByEntity(conn *sqlite.Conn, entityID int) (ArticleResult, error) {
-	secSchema := acta.TableSchema(conn, "sections")
-	entSchema := acta.TableSchema(conn, "entities")
+	secSchema := vfs.TableSchema(conn, "sections")
+	entSchema := vfs.TableSchema(conn, "entities")
 
 	targetTitle := ""
 	_ = sqlitex.Execute(conn, fmt.Sprintf(`
@@ -79,20 +73,11 @@ func GetArticleByEntity(conn *sqlite.Conn, entityID int) (ArticleResult, error) 
 	res.EntityID = entityID
 	res.Title = targetTitle
 
-	info := acta.GetEntityInfo(conn, res.EntityID, 0, 0)
-	res.Latitude = info.Lat
-	res.Longitude = info.Lon
-	res.Year = info.YearBegin
-	res.DateBegin = info.DateBegin
-	res.DateEnd = info.DateEnd
-	for _, m := range info.Media {
-		res.Media = append(res.Media, m)
-	}
 	return res, nil
 }
 
-func GetArticleByArticle(conn *sqlite.Conn, articleID int) (ArticleResult, error) {
-	entSchema := acta.TableSchema(conn, "entities")
+func GetArticle(conn *sqlite.Conn, articleID int) (ArticleResult, error) {
+	entSchema := vfs.TableSchema(conn, "entities")
 	targetEntityID := 0
 	_ = sqlitex.Execute(conn, fmt.Sprintf(`SELECT id FROM %s.entities WHERE article_id = ? LIMIT 1`, entSchema), &sqlitex.ExecOptions{
 		Args: []any{articleID},
@@ -111,12 +96,4 @@ func GetArticleByArticle(conn *sqlite.Conn, articleID int) (ArticleResult, error
 	}
 	res.ID = articleID
 	return res, nil
-}
-
-func GetArticle(conn *sqlite.Conn, entityOrArticleID int) (ArticleResult, error) {
-	res, err := GetArticleByEntity(conn, entityOrArticleID)
-	if err == nil && len(res.Sections) > 0 {
-		return res, nil
-	}
-	return GetArticleByArticle(conn, entityOrArticleID)
 }

@@ -3,7 +3,6 @@
 package vfs
 
 import (
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -12,9 +11,6 @@ import (
 	"sync"
 	"time"
 
-	seekable "github.com/SaveTheRbtz/zstd-seekable-format-go/pkg"
-	"github.com/SaveTheRbtz/zstd-seekable-format-go/pkg/framecache"
-	"github.com/klauspost/compress/zstd"
 	modernc "modernc.org/sqlite/vfs"
 )
 
@@ -130,125 +126,4 @@ func IsZstdHeader(header []byte) bool {
 		return true
 	}
 	return false
-}
-
-func IsSQLiteHeader(header []byte) bool {
-	return len(header) >= 16 && string(header[:16]) == "SQLite format 3\x00"
-}
-
-type AttachedTarget struct {
-	Schema         string
-	Path           string
-	URI            string
-	IsZst          bool
-	ZstFile        *os.File
-	ZstdDec        *zstd.Decoder
-	SeekableReader io.Closer
-}
-
-func (t *AttachedTarget) Close() error {
-	var firstErr error
-	if t.SeekableReader != nil {
-		if err := t.SeekableReader.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	if t.ZstdDec != nil {
-		t.ZstdDec.Close()
-	}
-	if t.ZstFile != nil {
-		if err := t.ZstFile.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-func PrepareTarget(idx int, filePath string) (*AttachedTarget, error) {
-	if filePath == "" {
-		return nil, nil
-	}
-
-	absPath, err := filepath.Abs(filePath)
-	if err == nil {
-		filePath = absPath
-	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database (%s): %w", filePath, err)
-	}
-
-	header := make([]byte, 16)
-	n, _ := f.ReadAt(header, 0)
-	header = header[:n]
-
-	target := &AttachedTarget{
-		Path: filePath,
-	}
-
-	if IsZstdHeader(header) {
-		target.IsZst = true
-		target.ZstFile = f
-		dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true))
-		if err != nil {
-			f.Close()
-			return nil, fmt.Errorf("failed to initialize zstd decoder (%s): %w", filePath, err)
-		}
-		target.ZstdDec = dec
-
-		fCache := framecache.NewFIFO(framecache.Limits{MaxFrames: 128})
-		sReader, err := seekable.NewReader(f, dec, seekable.WithReaderFrameCache(fCache))
-		if err != nil {
-			dec.Close()
-			f.Close()
-			return nil, fmt.Errorf("failed to create seekable reader (%s): %w", filePath, err)
-		}
-		target.SeekableReader = sReader
-
-		uncompressedSize, err := sReader.Seek(0, io.SeekEnd)
-		if err != nil {
-			sReader.Close()
-			dec.Close()
-			f.Close()
-			return nil, fmt.Errorf("failed to seek end (%s): %w", filePath, err)
-		}
-		if _, err := sReader.Seek(0, io.SeekStart); err != nil {
-			sReader.Close()
-			dec.Close()
-			f.Close()
-			return nil, fmt.Errorf("failed to seek start (%s): %w", filePath, err)
-		}
-
-		vfs, err := GetOrInitVFS()
-		if err != nil {
-			sReader.Close()
-			dec.Close()
-			f.Close()
-			return nil, fmt.Errorf("failed to initialize global VFS: %w", err)
-		}
-
-		virtualName := fmt.Sprintf("attached_%d.sqlite", idx)
-		GlobalRouter.Register(virtualName, NewLockedReaderAt(sReader), uncompressedSize)
-		target.URI = fmt.Sprintf("file:%s?vfs=%s&mode=ro&immutable=1", virtualName, vfs)
-	} else if IsSQLiteHeader(header) {
-		f.Close()
-		cleanPath := filepath.ToSlash(filePath)
-		if !strings.HasPrefix(cleanPath, "file:") {
-			target.URI = fmt.Sprintf("file:%s?mode=ro&immutable=1", cleanPath)
-		} else if !strings.Contains(cleanPath, "immutable=") {
-			if strings.Contains(cleanPath, "?") {
-				target.URI = cleanPath + "&mode=ro&immutable=1"
-			} else {
-				target.URI = cleanPath + "?mode=ro&immutable=1"
-			}
-		} else {
-			target.URI = cleanPath
-		}
-	} else {
-		f.Close()
-		return nil, fmt.Errorf("unsupported database format (%s)", filePath)
-	}
-
-	return target, nil
 }

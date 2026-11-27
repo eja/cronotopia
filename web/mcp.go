@@ -16,6 +16,7 @@ import (
 	"cronotopia/atlas"
 	"cronotopia/corpus"
 	"cronotopia/media"
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite"
 )
 
@@ -163,10 +164,8 @@ func (s *Server) processMCPCall(conn *sqlite.Conn, req jsonRPCRequest) jsonRPCRe
 		resp.Result = map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "Cronotopia", "version": "8.11.24"},
+			"serverInfo":      map[string]any{"name": s.name, "version": s.version},
 		}
-	case "notifications/initialized":
-		return jsonRPCResponse{}
 	case "tools/list":
 		resp.Result = map[string]any{
 			"tools": []map[string]any{
@@ -332,6 +331,11 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 		var results []acta.SearchResult
 		var err error
 
+		candidateLimit := limit * 6
+		if candidateLimit < 60 {
+			candidateLimit = 60
+		}
+
 		if mode == "semantic" {
 			if s.engine == nil {
 				return map[string]any{
@@ -339,13 +343,21 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 					"content": []map[string]any{{"type": "text", "text": "Semantic search unavailable: AI model is not loaded"}},
 				}
 			}
-			results, err = corpus.SearchVectors(conn, s.engine, q, limit)
+			raw, err := corpus.SearchVectors(conn, s.engine, q, candidateLimit)
+			if err != nil {
+				return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
+			}
+			results = acta.EnrichMatches(conn, raw, "S", acta.SearchParams{Limit: limit})
 		} else if mode == "lexical" {
-			results, err = corpus.SearchLexical(conn, q, limit)
+			raw, err := corpus.SearchLexical(conn, q, candidateLimit)
+			if err != nil {
+				return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
+			}
+			results = acta.EnrichMatches(conn, raw, "L", acta.SearchParams{Limit: limit})
 		} else if mode == "entity" {
 			results, err = acta.SearchEntityLabels(conn, q, limit)
 		} else {
-			results, err = corpus.SearchHybrid(conn, s.engine, q, limit)
+			results, err = acta.SearchHybrid(conn, s.engine, q, limit)
 		}
 
 		if err != nil {
@@ -365,7 +377,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 		} else if str, ok := args["id"].(string); ok {
 			id, _ = strconv.Atoi(str)
 		}
-		art, err := corpus.GetArticle(conn, id)
+		art, err := acta.GetArticle(conn, id)
 		if err != nil {
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
 		}
@@ -380,8 +392,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": sb.String()}}}
 
 	case "get_map_config":
-		schema := s.tableSchema(conn, "settings")
-		cfg := atlas.GetMapConfig(conn, schema)
+		cfg := atlas.GetMapConfig(conn)
 		data, _ := json.MarshalIndent(cfg, "", "  ")
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}}
 
@@ -393,8 +404,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 			rad = 1000.0
 		}
 
-		schema := s.tableSchema(conn, "settings")
-		cfg := atlas.GetMapConfig(conn, schema)
+		cfg := atlas.GetMapConfig(conn)
 		zoom := cfg.MaxZoom
 		if z, ok := args["zoom"].(float64); ok && z > 0 {
 			zoom = int(z)
@@ -405,7 +415,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 			limit = int(l)
 		}
 
-		mapSchema := s.tableSchema(conn, "tiles")
+		mapSchema := vfs.TableSchema(conn, "tiles")
 		centroids, err := atlas.ExtractTileCentroids(conn, mapSchema, lat, lon, rad, zoom)
 		if err != nil {
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}
@@ -437,14 +447,13 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 			rad = 1000.0
 		}
 
-		schema := s.tableSchema(conn, "settings")
-		cfg := atlas.GetMapConfig(conn, schema)
+		cfg := atlas.GetMapConfig(conn)
 		zoom := cfg.MaxZoom
 		if z, ok := args["zoom"].(float64); ok && z > 0 {
 			zoom = int(z)
 		}
 
-		mapSchema := s.tableSchema(conn, "tiles")
+		mapSchema := vfs.TableSchema(conn, "tiles")
 		minLat, maxLat, minLon, maxLon := atlas.BoundingBox(lat, lon, rad/1000.0)
 		feat, err := atlas.ExtractFeatureByID(conn, mapSchema, id, minLon, minLat, maxLon, maxLat, zoom)
 		if err != nil {
@@ -471,7 +480,7 @@ func (s *Server) executeMCPTool(conn *sqlite.Conn, name string, args map[string]
 		if f, ok := args["length"].(float64); ok {
 			length = int64(f)
 		}
-		mediaSchema := s.tableSchema(conn, "media")
+		mediaSchema := vfs.TableSchema(conn, "media")
 		data, _, _, err := media.Get(conn, mediaSchema, id, offset, length)
 		if err != nil {
 			return map[string]any{"isError": true, "content": []map[string]any{{"type": "text", "text": err.Error()}}}

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -59,36 +60,6 @@ func InitElevationSchema(conn *sqlite.Conn) error {
 	return nil
 }
 
-func HasMapTable(conn *sqlite.Conn, schema string) bool {
-	if schema == "" {
-		schema = "main"
-	}
-	var exists bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name IN ('tiles', 'tiles_shallow') LIMIT 1", &sqlitex.ExecOptions{
-		Args: []any{schema},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			exists = true
-			return nil
-		},
-	})
-	return exists
-}
-
-func HasElevationTable(conn *sqlite.Conn, schema string) bool {
-	if schema == "" {
-		schema = "main"
-	}
-	var exists bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name = 'elevations' LIMIT 1", &sqlitex.ExecOptions{
-		Args: []any{schema},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			exists = true
-			return nil
-		},
-	})
-	return exists
-}
-
 func GetTileData(conn *sqlite.Conn, schema string, z, x, y int) ([]byte, error) {
 	if z < 0 || z > 30 {
 		return nil, fmt.Errorf("zoom level out of bounds: %d", z)
@@ -131,31 +102,15 @@ func GetElevationTileData(conn *sqlite.Conn, schema string, z, x, y int) ([]byte
 	return tileData, err
 }
 
-func GetMapConfig(conn *sqlite.Conn, schema string) Config {
+func GetMapConfig(conn *sqlite.Conn) Config {
 	cfg := Config{Zoom: 1, MinZoom: 0, MaxZoom: 14}
-	tbl := "settings"
-	if schema != "" && schema != "main" {
-		tbl = schema + ".settings"
-	}
 
-	getSetting := func(key string) string {
-		var val string
-		_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT value FROM %s WHERE key = ? LIMIT 1", tbl), &sqlitex.ExecOptions{
-			Args: []any{key},
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				val = stmt.ColumnText(0)
-				return nil
-			},
-		})
-		return val
-	}
-
-	if val := getSetting("map_minzoom"); val != "" {
+	if val := vfs.GetSetting(conn, "map_minzoom"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.MinZoom = n
 		}
 	}
-	if val := getSetting("map_maxzoom"); val != "" {
+	if val := vfs.GetSetting(conn, "map_maxzoom"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.MaxZoom = n
 		}
@@ -165,7 +120,7 @@ func GetMapConfig(conn *sqlite.Conn, schema string) Config {
 		cfg.Zoom = 1
 	}
 
-	if centerStr := getSetting("map_center"); centerStr != "" {
+	if centerStr := vfs.GetSetting(conn, "map_center"); centerStr != "" {
 		parts := strings.Split(centerStr, ",")
 		if len(parts) >= 2 {
 			cfg.CenterLng, _ = strconv.ParseFloat(parts[0], 64)

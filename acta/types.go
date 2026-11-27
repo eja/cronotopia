@@ -4,9 +4,6 @@ package acta
 
 import (
 	"errors"
-	"math"
-	"strings"
-	"unicode/utf8"
 
 	"cronotopia/media"
 )
@@ -92,34 +89,4 @@ type EntityInfo struct {
 	Times     []EventTime
 	Places    []EventPlace
 	Media     []media.Item
-}
-
-func Snippet(val string, maxLen int) string {
-	if utf8.RuneCountInString(val) > maxLen {
-		runes := []rune(val)
-		return string(runes[:maxLen]) + "..."
-	}
-	return val
-}
-
-func NormalizeBM25(score float64) float64 {
-	rawScore := -score
-	if rawScore < 0 {
-		rawScore = 0
-	}
-	const c = 0.1
-	return (1.0 - math.Exp(-c*rawScore)) * 100.0
-}
-
-func SanitizeFTSQuery(query string) string {
-	words := strings.Fields(query)
-	if len(words) == 0 {
-		return ""
-	}
-	var sanitized []string
-	for _, w := range words {
-		clean := strings.ReplaceAll(w, `"`, `""`)
-		sanitized = append(sanitized, `"`+clean+`"`)
-	}
-	return strings.Join(sanitized, " ")
 }

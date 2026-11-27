@@ -18,12 +18,13 @@ import (
 	"cronotopia/vfs"
 	"cronotopia/web"
 
+	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/shell"
 )
 
 const (
 	Name    = "Cronotopia"
-	Version = "8.11.24"
+	Version = "8.11.27"
 )
 
 var (
@@ -33,8 +34,7 @@ var (
 func main() {
 	options = &Config{}
 
-	flag.StringVar(&options.dbPath, "db", "cronotopia.db", "SQLite database path")
-	flag.Var(&options.dbAdd, "db-add", "Additional database to load (repeatable or comma-separated)")
+	flag.Var(&options.dbPath, "db", "SQLite database path (repeatable or comma-separated)")
 	flag.BoolVar(&options.dbShell, "db-shell", false, "Start interactive SQLite shell")
 	flag.BoolVar(&options.compress, "compress", false, "Compress database (-db) to seekable zstd")
 	flag.BoolVar(&options.decompress, "decompress", false, "Decompress database (-db) from seekable zstd")
@@ -83,18 +83,23 @@ func main() {
 		log.SetOutput(io.Discard)
 	}
 
+	if len(options.dbPath) == 0 {
+		options.dbPath = stringSlice{"cronotopia.db"}
+	}
+	primaryDB := options.dbPath[0]
+
 	if options.compress && options.decompress {
 		fmt.Fprintln(os.Stderr, "Error: cannot specify both -decompress and -compress")
 		os.Exit(1)
 	}
 
 	if options.compress {
-		if strings.HasSuffix(options.dbPath, ".zst") {
-			fmt.Fprintf(os.Stderr, "Error: database %q already ends in .zst\n", options.dbPath)
+		if strings.HasSuffix(primaryDB, ".zst") {
+			fmt.Fprintf(os.Stderr, "Error: database %q already ends in .zst\n", primaryDB)
 			os.Exit(1)
 		}
-		dst := options.dbPath + ".zst"
-		if err := vfs.CompressDB(options.dbPath, dst, numWorkers()); err != nil {
+		dst := primaryDB + ".zst"
+		if err := vfs.CompressDB(primaryDB, dst, numWorkers()); err != nil {
 			fmt.Fprintf(os.Stderr, "Compress error: %v\n", err)
 			os.Exit(1)
 		}
@@ -102,68 +107,53 @@ func main() {
 	}
 
 	if options.decompress {
-		if !strings.HasSuffix(options.dbPath, ".zst") {
-			fmt.Fprintf(os.Stderr, "Error: cannot decompress %q (expected .zst suffix)\n", options.dbPath)
+		if !strings.HasSuffix(primaryDB, ".zst") {
+			fmt.Fprintf(os.Stderr, "Error: cannot decompress %q (expected .zst suffix)\n", primaryDB)
 			os.Exit(1)
 		}
-		dst := strings.TrimSuffix(options.dbPath, ".zst")
-		if err := vfs.DecompressDB(options.dbPath, dst); err != nil {
+		dst := strings.TrimSuffix(primaryDB, ".zst")
+		if err := vfs.DecompressDB(primaryDB, dst); err != nil {
 			fmt.Fprintf(os.Stderr, "Decompress error: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	handler, err := openDatabase(options.dbPath)
+	readOnly := !options.dbShell &&
+		!options.aiSync &&
+		options.wikipediaImport == "" &&
+		options.wikidataImport == "" &&
+		options.wikiliteImport == "" &&
+		options.ggufImport == "" &&
+		options.pmtilesImport == "" &&
+		options.mediaImport == "" &&
+		options.etopoImport == ""
+
+	handler, err := vfs.OpenDatabase(options.dbPath, readOnly)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer handler.Close()
 
-	conn := handler.pool.Get(context.Background())
-	if conn == nil {
-		log.Fatalf("Database pool busy")
+	withConn := func(fn func(conn *sqlite.Conn) error) error {
+		conn := handler.Pool.Get(context.Background())
+		if conn == nil {
+			return fmt.Errorf("database pool busy")
+		}
+		defer handler.Pool.Put(conn)
+		return fn(conn)
 	}
 
 	if options.ggufImport != "" {
-		if err := corpus.ImportGGUF(handler.pool, options.ggufImport); err != nil {
+		if err := corpus.ImportGGUF(handler.Pool, options.ggufImport); err != nil {
 			log.Fatalf("Model import error: %v", err)
 		}
 		log.Println("Model imported into database.")
-		handler.pool.Put(conn)
-		return
-	}
-
-	if options.pmtilesImport != "" {
-		if err := atlas.ImportPMTiles(conn, options.pmtilesImport, options.zoom); err != nil {
-			log.Fatalf("PMTiles import error: %v", err)
-		}
-		log.Println("PMTiles import completed successfully.")
-		handler.pool.Put(conn)
-		return
-	}
-
-	if options.etopoImport != "" {
-		if err := atlas.ImportETOPO(conn, options.etopoImport, options.zoom, numWorkers()); err != nil {
-			log.Fatalf("ETOPO import error: %v", err)
-		}
-		log.Println("ETOPO import completed successfully.")
-		handler.pool.Put(conn)
-		return
-	}
-
-	if options.wikidataImport != "" {
-		if err := acta.ImportWikidata(conn, options.wikidataImport, numWorkers()); err != nil {
-			log.Fatalf("Wikidata import error: %v", err)
-		}
-		log.Println("Wikidata import completed successfully.")
-		handler.pool.Put(conn)
 		return
 	}
 
 	if options.wikipediaImport != "" {
-		handler.pool.Put(conn)
-		if err := corpus.ImportWikipedia(handler.pool, options.wikipediaImport); err != nil {
+		if err := corpus.ImportWikipedia(handler.Pool, options.wikipediaImport); err != nil {
 			log.Fatalf("Wikipedia import error: %v", err)
 		}
 		log.Println("Wikipedia import completed successfully.")
@@ -171,26 +161,62 @@ func main() {
 	}
 
 	if options.wikiliteImport != "" {
-		handler.pool.Put(conn)
-		if err := corpus.ImportWikilite(handler.pool, options.wikiliteImport); err != nil {
+		if err := ImportWikilite(handler.Pool, options.wikiliteImport); err != nil {
 			log.Fatalf("Wikilite import error: %v", err)
 		}
 		log.Println("Wikilite import completed successfully.")
 		return
 	}
 
+	if options.pmtilesImport != "" {
+		err := withConn(func(conn *sqlite.Conn) error {
+			return atlas.ImportPMTiles(conn, options.pmtilesImport, options.zoom)
+		})
+		if err != nil {
+			log.Fatalf("PMTiles import error: %v", err)
+		}
+		log.Println("PMTiles import completed successfully.")
+		return
+	}
+
+	if options.etopoImport != "" {
+		err := withConn(func(conn *sqlite.Conn) error {
+			return atlas.ImportETOPO(conn, options.etopoImport, options.zoom, numWorkers())
+		})
+		if err != nil {
+			log.Fatalf("ETOPO import error: %v", err)
+		}
+		log.Println("ETOPO import completed successfully.")
+		return
+	}
+
+	if options.wikidataImport != "" {
+		err := withConn(func(conn *sqlite.Conn) error {
+			return acta.ImportWikidata(conn, options.wikidataImport, numWorkers())
+		})
+		if err != nil {
+			log.Fatalf("Wikidata import error: %v", err)
+		}
+		log.Println("Wikidata import completed successfully.")
+		return
+	}
+
 	if options.mediaImport != "" {
-		if err := media.Import(conn, options.mediaImport); err != nil {
+		err := withConn(func(conn *sqlite.Conn) error {
+			return media.Import(conn, options.mediaImport)
+		})
+		if err != nil {
 			log.Fatalf("Media import error: %v", err)
 		}
 		log.Println("Media import completed successfully.")
-		handler.pool.Put(conn)
 		return
 	}
 
 	if options.dbShell {
-		shell.Run(conn)
-		handler.pool.Put(conn)
+		_ = withConn(func(conn *sqlite.Conn) error {
+			shell.Run(conn)
+			return nil
+		})
 		return
 	}
 
@@ -208,21 +234,26 @@ func main() {
 	}
 
 	aiEngine := corpus.NewEngine(corpusCfg)
-	if err := aiEngine.Init(conn); err != nil {
-		log.Printf("AI initialization warning: %v", err)
+	initErr := withConn(func(conn *sqlite.Conn) error {
+		return aiEngine.Init(conn)
+	})
+	if initErr != nil {
+		log.Printf("AI initialization warning: %v", initErr)
 		aiEngine = nil
 	}
-	handler.pool.Put(conn)
 
-	if options.aiSync && aiEngine != nil {
-		if err := aiEngine.ProcessEmbeddings(handler.pool); err != nil {
+	if options.aiSync {
+		if aiEngine == nil {
+			log.Fatalf("AI engine failed to initialize: %v", initErr)
+		}
+		if err := aiEngine.ProcessEmbeddings(handler.Pool); err != nil {
 			log.Fatalf("Embeddings processing error: %v", err)
 		}
 		log.Println("AI sync completed successfully.")
 		return
 	}
 
-	server := web.NewServer(handler.pool, aiEngine)
+	server := web.NewServer(handler.Pool, aiEngine, Name, Version)
 	if err := server.Start(options.webHost, options.webPort); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

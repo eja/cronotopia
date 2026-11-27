@@ -8,61 +8,10 @@ import (
 
 	"cronotopia/atlas"
 	"cronotopia/media"
+	"cronotopia/vfs"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
-
-func TableSchema(conn *sqlite.Conn, table string) string {
-	candidates := []string{"corpus_db", "media_db", "main"}
-	for _, s := range candidates {
-		var exists bool
-		_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name = ? LIMIT 1", &sqlitex.ExecOptions{
-			Args: []any{s, table},
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				exists = true
-				return nil
-			},
-		})
-		if exists {
-			var hasRow bool
-			_ = sqlitex.Execute(conn, fmt.Sprintf("SELECT 1 FROM %s.%s LIMIT 1", s, table), &sqlitex.ExecOptions{
-				ResultFunc: func(stmt *sqlite.Stmt) error {
-					hasRow = true
-					return nil
-				},
-			})
-			if hasRow {
-				return s
-			}
-		}
-	}
-	for _, s := range candidates {
-		var exists bool
-		_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name = ? LIMIT 1", &sqlitex.ExecOptions{
-			Args: []any{s, table},
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				exists = true
-				return nil
-			},
-		})
-		if exists {
-			return s
-		}
-	}
-	return "main"
-}
-
-func HasSchemaTable(conn *sqlite.Conn, schema, table string) bool {
-	var exists bool
-	_ = sqlitex.Execute(conn, "SELECT 1 FROM pragma_table_list WHERE schema = ? AND name = ? LIMIT 1", &sqlitex.ExecOptions{
-		Args: []any{schema, table},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			exists = true
-			return nil
-		},
-	})
-	return exists
-}
 
 func GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, targetLon float64) EntityInfo {
 	var info EntityInfo
@@ -70,7 +19,7 @@ func GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, targetLon float64
 		return info
 	}
 
-	placeSchema := TableSchema(conn, "entity_places")
+	placeSchema := vfs.TableSchema(conn, "entity_places")
 	type placeRow struct {
 		code int
 		lat  float64
@@ -124,7 +73,7 @@ func GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, targetLon float64
 		}
 	}
 
-	timeSchema := TableSchema(conn, "entity_times")
+	timeSchema := vfs.TableSchema(conn, "entity_times")
 	type timeRow struct {
 		code    int
 		y, m, d int
@@ -166,8 +115,8 @@ func GetEntityInfo(conn *sqlite.Conn, entityID int, targetLat, targetLon float64
 		}
 	}
 
-	mediaSchema := TableSchema(conn, "media")
-	if HasSchemaTable(conn, mediaSchema, "media") {
+	mediaSchema := vfs.TableSchema(conn, "media")
+	if vfs.HasSchemaTable(conn, mediaSchema, "media") {
 		if items, err := media.GetByEntity(conn, mediaSchema, entityID); err == nil {
 			info.Media = items
 		}
@@ -185,7 +134,7 @@ func MatchesTime(conn *sqlite.Conn, entityID int, p SearchParams) (bool, int) {
 	var query string
 	var args []any
 
-	timeSchema := TableSchema(conn, "entity_times")
+	timeSchema := vfs.TableSchema(conn, "entity_times")
 
 	if p.Year != 0 {
 		minJD, maxJD := GetJulianDayBounds(p.Year, p.Month, p.Day)
